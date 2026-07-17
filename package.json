@@ -1,0 +1,36 @@
+{
+  "name": "constancias-telecredito",
+  "version": "1.0.0",
+  "description": "Descarga automática de constancias de operaciones de TeleCrédito BCP",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "cli": "node src/index.js",
+    "build:win": "electron-builder --win portable"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright-core": "^1.61.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.nativaorganics.constanciastelecredito",
+    "productName": "Constancias TeleCredito",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  }
+}

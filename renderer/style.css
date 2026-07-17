@@ -1,0 +1,87 @@
+body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    background: #f4f6f8;
+    color: #1f2933;
+    margin: 0;
+    padding: 24px;
+}
+
+h1 {
+    font-size: 20px;
+    margin-bottom: 20px;
+    color: #0b3d91;
+}
+
+.paso {
+    background: #ffffff;
+    border: 1px solid #dfe3e8;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.paso h2 {
+    font-size: 14px;
+    margin: 0 0 8px 0;
+    color: #0b3d91;
+}
+
+.paso p {
+    font-size: 13px;
+    margin: 4px 0 12px 0;
+}
+
+label {
+    display: inline-block;
+    font-size: 13px;
+    margin-right: 20px;
+}
+
+input[type="date"] {
+    display: block;
+    margin-top: 4px;
+    padding: 6px 8px;
+    font-size: 13px;
+    border: 1px solid #cbd2d9;
+    border-radius: 4px;
+}
+
+button {
+    background: #0b3d91;
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 8px;
+}
+
+button:disabled {
+    background: #b0bac5;
+    cursor: not-allowed;
+}
+
+button:hover:not(:disabled) {
+    background: #092e6e;
+}
+
+.estado {
+    font-weight: 600;
+    color: #0b3d91;
+}
+
+.log {
+    max-height: 220px;
+    overflow-y: auto;
+    background: #0f1720;
+    color: #d1d5db;
+    font-family: "Consolas", monospace;
+    font-size: 12px;
+    padding: 10px;
+    border-radius: 6px;
+}
+
+.log .ok { color: #4ade80; }
+.log .error { color: #f87171; }
+.log .omitido { color: #94a3b8; }

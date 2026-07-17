@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Constancias TeleCrédito</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <h1>Descarga de Constancias — TeleCrédito BCP</h1>
+
+    <div class="paso">
+        <h2>Paso 1</h2>
+        <p>Haz clic para abrir el navegador. Cuando abra, inicia sesión con tu tarjeta y clave del banco.</p>
+        <button id="btnAbrir">Abrir navegador</button>
+        <p id="estado" class="estado"></p>
+        <button id="btnContinuar" disabled>Ya inicié sesión, continuar</button>
+    </div>
+
+    <div class="paso">
+        <h2>Paso 2</h2>
+        <p>Elige el rango de fechas de las operaciones que quieres descargar:</p>
+
+        <label>
+            Desde
+            <input type="date" id="fechaDesde">
+        </label>
+
+        <label>
+            Hasta
+            <input type="date" id="fechaHasta">
+        </label>
+
+        <button id="btnBuscar" disabled>Buscar y descargar constancias</button>
+    </div>
+
+    <div class="paso">
+        <h2>Progreso</h2>
+        <p id="progreso"></p>
+        <div id="log" class="log"></div>
+    </div>
+
+    <div class="paso">
+        <button id="btnCarpeta">Abrir carpeta de constancias</button>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
