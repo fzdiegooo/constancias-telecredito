@@ -103,13 +103,34 @@ async function seleccionarFecha(page, campo, fecha) {
     await page.waitForTimeout(300);
 }
 
-async function buscarConRespuesta(page, disparador) {
+// pageNumberEsperado (0-indexado, igual que el campo metaData.pageNumber que
+// manda el propio sitio) permite descartar respuestas "viejas"/de otra
+// página que por una condición de carrera coincidan en URL y método pero no
+// correspondan al pedido que acabamos de disparar (visto en producción: al
+// paginar, a veces se captura una respuesta de la página anterior en vez de
+// la nueva). Si no se pasa, solo valida URL + método (uso original).
+// timeoutMs limita cuánto esperamos esa respuesta (por defecto el de
+// Playwright, 30s); usar un valor corto cuando esta llamada es una
+// "recuperación" reactiva y no queremos colgar el script si el sitio no
+// dispara ninguna petición nueva (p. ej. porque ya cree estar en esa página).
+async function buscarConRespuesta(page, disparador, pageNumberEsperado, timeoutMs) {
 
     const [response] = await Promise.all([
-        page.waitForResponse(res =>
-            res.request().method() === "POST" &&
-            res.url().includes("/channel-orders/search")
-        ),
+        page.waitForResponse(res => {
+
+            if (res.request().method() !== "POST" || !res.url().includes("/channel-orders/search"))
+                return false;
+
+            if (pageNumberEsperado === undefined)
+                return true;
+
+            try {
+                const body = res.request().postDataJSON();
+                return body?.metaData?.pageNumber === pageNumberEsperado;
+            } catch {
+                return false;
+            }
+        }, timeoutMs ? { timeout: timeoutMs } : undefined),
         disparador()
     ]);
 
@@ -120,6 +141,21 @@ async function buscarConRespuesta(page, disparador) {
     }
 
     return json;
+}
+
+// Último recurso cuando todo lo demás (reintentos, scroll, re-navegación de
+// página) falló: limpia el estado del buscador con el botón "Restablecer"
+// (a la derecha de "Buscar") para partir de cero antes de reaplicar el
+// filtro, por si la SPA quedó en un estado de paginación/filtro inconsistente
+// que ningún otro reintento pudo corregir.
+async function restablecer(page) {
+
+    // Es un componente custom (bcp-button-consult-tray > button >
+    // bcp-character-consult-tray > span) con id-auto="button-restore" fijo,
+    // más confiable que matchear el texto "Restablecer" a través de varios
+    // niveles de elementos custom anidados.
+    await page.locator('[id-auto="button-restore"]').click();
+    await page.waitForTimeout(500);
 }
 
 async function aplicarFiltro(page, fechaDesde, fechaHasta, estado = "Procesada") {
@@ -139,7 +175,8 @@ async function aplicarFiltro(page, fechaDesde, fechaHasta, estado = "Procesada")
     await page.waitForTimeout(400);
 
     const json = await buscarConRespuesta(page, () =>
-        page.getByRole("button", { name: "search Buscar" }).click()
+        page.getByRole("button", { name: "search Buscar" }).click(),
+        0
     );
 
     return {
@@ -148,15 +185,27 @@ async function aplicarFiltro(page, fechaDesde, fechaHasta, estado = "Procesada")
     };
 }
 
-async function irAPagina(page, numeroPagina) {
+async function irAPagina(page, numeroPagina, timeoutMs) {
 
     const nav = page.getByRole("navigation", { name: "Page navigation" });
 
     const json = await buscarConRespuesta(page, () =>
-        nav.getByText(String(numeroPagina), { exact: true }).click()
+        nav.getByText(String(numeroPagina), { exact: true }).click(),
+        numeroPagina - 1,
+        timeoutMs
     );
+
+    // Los controles de paginación están al final de la tabla, así que al
+    // hacer clic el scroll suele quedar abajo (donde quedó de procesar la
+    // página anterior). Si la tabla usa scroll virtual, las primeras filas
+    // de la página nueva no llegan a existir en el DOM hasta que se
+    // desplaza de vuelta arriba, lo que hace fallar indiceFilaPorMonto para
+    // la primera operación de cada página nueva. Forzamos scroll al inicio
+    // y damos un respiro para que la tabla termine de re-renderizar.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(500);
 
     return json.operations;
 }
 
-module.exports = { aplicarFiltro, irAPagina };
+module.exports = { aplicarFiltro, irAPagina, restablecer };

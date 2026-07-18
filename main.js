@@ -87,7 +87,9 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
 
         while (true) {
 
-            for (const op of operations) {
+            for (let i = 0; i < operations.length; i++) {
+
+                const op = operations[i];
 
                 await mantenerSesion(page);
 
@@ -105,6 +107,19 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
 
                 try {
 
+                    // El sitio no recuerda la página actual: al volver de
+                    // una operación (volverALista) la lista siempre se
+                    // resetea a la página 1. La primera operación del lote
+                    // ya queda bien posicionada (la trajo el irAPagina de
+                    // la iteración anterior), pero desde la segunda en
+                    // adelante hay que re-navegar antes de buscar la fila.
+                    // Va dentro del try/catch (con timeout corto) porque si
+                    // el sitio no dispara una petición nueva (p. ej. ya
+                    // cree estar en esa página), esto no debe colgar/tumbar
+                    // todo el proceso.
+                    if (i > 0 && paginaActual > 1)
+                        await irAPagina(page, paginaActual, 20000);
+
                     await abrirOperacion(page, op.targetBeneficiary, monto);
                     await mantenerSesion(page);
 
@@ -121,6 +136,44 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
                     fallidas++;
                     enviar("log", { tipo: "error", texto: `${nombre} — ${err.message}` });
                     await volverALista(page).catch(() => {});
+
+                    // Último recurso: si ni el reintento de abrirOperacion
+                    // ni la re-navegación a la página bastaron, probamos
+                    // con una recarga completa de la página (page.goto) en
+                    // vez de solo clic en "Restablecer": si la sesión
+                    // expiró o el sitio redirigió solo (se vio un caso
+                    // donde el buscador quedó deshabilitado/sin registros y
+                    // ya no reaccionaba a los clics), una recarga completa
+                    // desde cero es lo único que lo destraba, igual que
+                    // hacerlo manualmente.
+                    try {
+
+                        enviar("log", { tipo: "info", texto: `↺ Reintentando "${nombre}" con recarga completa + reaplicar filtro...` });
+
+                        await page.goto("https://www.tlcbcp.com/#/h/bandeja-consulta");
+                        await page.waitForTimeout(1000);
+                        await aplicarFiltro(page, fechaDesde, fechaHasta);
+
+                        if (paginaActual > 1)
+                            await irAPagina(page, paginaActual, 20000);
+
+                        await abrirOperacion(page, op.targetBeneficiary, monto);
+                        await mantenerSesion(page);
+
+                        const pdf = await descargarPdfOperacion(page);
+                        guardar(nombre, pdf.data);
+
+                        exitosas++;
+                        fallidas--;
+                        enviar("log", { tipo: "ok", texto: `${nombre} (recuperado)` });
+
+                        await volverALista(page);
+
+                    } catch (err2) {
+
+                        enviar("log", { tipo: "error", texto: `Falló también tras recarga completa: ${nombre} — ${err2.message}` });
+                        await volverALista(page).catch(() => {});
+                    }
                 }
 
                 enviar("progreso", { actual: procesadas, pagina: paginaActual, totalPaginas: totalPages });

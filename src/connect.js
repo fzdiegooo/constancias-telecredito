@@ -53,6 +53,23 @@ async function intentarConectar() {
     }
 }
 
+// La automatización funciona vía CDP (clics, navegación, page.pdf(), etc.)
+// sin importar si la ventana está minimizada o en primer plano — el
+// protocolo habla directo con el renderer, no simula input a nivel del
+// sistema operativo. Minimizamos la ventana para que el usuario pueda
+// seguir usando su pantalla mientras el script corre en segundo plano.
+async function minimizarVentana(context, page) {
+
+    try {
+        const session = await context.newCDPSession(page);
+        const { windowId } = await session.send('Browser.getWindowForTarget');
+        await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+    } catch {
+        // Si falla (navegador no soporta el comando, etc.) seguimos igual
+        // sin minimizar; no es crítico para el funcionamiento del script.
+    }
+}
+
 function lanzarNavegador() {
 
     const ejecutable = encontrarNavegador();
@@ -94,6 +111,8 @@ async function connect(onEstado) {
     if (!page.url().includes('tlcbcp.com')) {
         await page.goto(URL_BANCO);
     }
+
+    await minimizarVentana(context, page);
 
     return { browser, page };
 }
