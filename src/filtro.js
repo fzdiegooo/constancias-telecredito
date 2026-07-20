@@ -342,7 +342,7 @@ async function irAPagina(page, numeroPagina, timeoutMs, intentosMax = 3) {
             // de procesar la página anterior). Si la tabla usa scroll
             // virtual, las primeras filas de la página nueva no llegan a
             // existir en el DOM hasta que se desplaza de vuelta arriba, lo
-            // que hace fallar indiceFilaPorMonto para la primera operación
+            // que hace fallar encontrarElementoFila para la primera operación
             // de cada página nueva. Forzamos scroll al inicio y damos un
             // respiro para que la tabla termine de re-renderizar.
             await page.evaluate(() => window.scrollTo(0, 0));

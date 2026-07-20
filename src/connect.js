@@ -35,13 +35,27 @@ function encontrarNavegador() {
     } else {
 
         candidatos.push(
-            'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge'
+            'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'brave', 'brave-browser', 'microsoft-edge'
         );
     }
 
-    return candidatos.find(c => {
-        try { return fs.existsSync(c); } catch { return false; }
-    }) || candidatos[candidatos.length - 1];
+    const commandExists = (cmd) => {
+        if (path.isAbsolute(cmd)) {
+            try { return fs.existsSync(cmd); } catch { return false; }
+        }
+        const pathDirs = (process.env.PATH || '').split(path.delimiter);
+        for (const dir of pathDirs) {
+            const fullPath = path.join(dir, cmd);
+            try {
+                if (fs.existsSync(fullPath)) {
+                    return true;
+                }
+            } catch { }
+        }
+        return false;
+    };
+
+    return candidatos.find(commandExists) || candidatos[candidatos.length - 1];
 }
 
 async function intentarConectar() {

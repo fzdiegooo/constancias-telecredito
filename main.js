@@ -5,7 +5,7 @@ const { connect } = require("./src/connect");
 const { aplicarFiltro, irAPagina } = require("./src/filtro");
 const { abrirOperacion, descargarPdfOperacion, volverALista } = require("./src/operaciones");
 const { mantenerSesion } = require("./src/sesion");
-const { guardar, carpetaConstancias } = require("./src/download");
+const { guardar, carpetaConstancias, guardarReporte } = require("./src/download");
 const { limpiar, fechaArchivo, formatMonto } = require("./src/utils");
 
 let ventana;
@@ -67,17 +67,31 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
     }
 
     const { page } = sesion;
+    const logs = [];
+
+    const registrarLog = (tipo, texto) => {
+        const prefix = tipo === "ok" ? "✓" : tipo === "error" ? "✗" : tipo === "info" ? "↺" : "⏭";
+        logs.push(`${prefix} ${texto}`);
+        enviar("log", { tipo, texto });
+    };
+
+    const registrarEstado = (texto) => {
+        logs.push(`[ESTADO] ${texto}`);
+        enviar("estado", texto);
+    };
 
     try {
 
-        enviar("estado", "Abriendo Estado de operaciones...");
+        registrarEstado("Abriendo Estado de operaciones...");
 
         await page.goto("https://www.tlcbcp.com/#/h/bandeja-consulta");
         await page.waitForTimeout(1000);
 
-        enviar("estado", "Aplicando filtro (Procesada, fechas seleccionadas)...");
+        registrarEstado("Aplicando filtro (Procesada, fechas seleccionadas)...");
 
         let { operations, totalPages } = await aplicarFiltro(page, fechaDesde, fechaHasta);
+
+        registrarEstado(`Filtro aplicado: ${totalPages} página(s) de resultados.`);
 
         let exitosas = 0;
         let fallidas = 0;
@@ -86,6 +100,8 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
         let paginaActual = 1;
 
         while (true) {
+
+            registrarEstado(`--- Página ${paginaActual} (${operations.length} operaciones) ---`);
 
             for (let i = 0; i < operations.length; i++) {
 
@@ -98,7 +114,7 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
 
                 if (op.targetBeneficiary === "Varios beneficiarios") {
                     procesadas++;
-                    enviar("log", { tipo: "omitido", texto: `Omitido (Varios beneficiarios): ${nombre}` });
+                    registrarLog("omitido", `Omitido (Varios beneficiarios): ${nombre}`);
                     enviar("progreso", { actual: procesadas, pagina: paginaActual, totalPaginas: totalPages });
                     continue;
                 }
@@ -127,14 +143,14 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
                     const nombreGuardado = guardar(nombre, pdf.data);
 
                     exitosas++;
-                    enviar("log", { tipo: "ok", texto: nombreGuardado });
+                    registrarLog("ok", nombreGuardado);
 
                     await volverALista(page);
 
                 } catch (err) {
 
                     fallidas++;
-                    enviar("log", { tipo: "error", texto: `${nombre} — ${err.message}` });
+                    registrarLog("error", `${nombre} — ${err.message}`);
                     await volverALista(page).catch(() => {});
 
                     // Último recurso: si ni el reintento de abrirOperacion
@@ -148,7 +164,7 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
                     // hacerlo manualmente.
                     try {
 
-                        enviar("log", { tipo: "info", texto: `↺ Reintentando "${nombre}" con recarga completa + reaplicar filtro...` });
+                        registrarLog("info", `↺ Reintentando "${nombre}" con recarga completa + reaplicar filtro...`);
 
                         await page.goto("https://www.tlcbcp.com/#/h/bandeja-consulta");
                         await page.waitForTimeout(1000);
@@ -165,13 +181,13 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
 
                         exitosas++;
                         fallidas--;
-                        enviar("log", { tipo: "ok", texto: `${nombreGuardado} (recuperado)` });
+                        registrarLog("ok", `${nombreGuardado} (recuperado)`);
 
                         await volverALista(page);
 
                     } catch (err2) {
 
-                        enviar("log", { tipo: "error", texto: `Falló también tras recarga completa: ${nombre} — ${err2.message}` });
+                        registrarLog("error", `Falló también tras recarga completa: ${nombre} — ${err2.message}`);
                         await volverALista(page).catch(() => {});
                     }
                 }
@@ -182,8 +198,15 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
             if (paginaActual >= totalPages) break;
 
             paginaActual++;
-            enviar("estado", `Cargando página ${paginaActual} de ${totalPages}...`);
+            registrarEstado(`Cargando página ${paginaActual} de ${totalPages}...`);
             operations = await irAPagina(page, paginaActual);
+        }
+
+        try {
+            const nombreReporte = guardarReporte(logs);
+            registrarEstado(`Reporte guardado como: ${nombreReporte}`);
+        } catch (errReporte) {
+            console.error(`No se pudo guardar el archivo de reporte: ${errReporte.message}`);
         }
 
         enviar("finalizado", { exitosas, fallidas, carpeta: carpetaConstancias() });

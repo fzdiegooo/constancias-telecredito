@@ -5,7 +5,7 @@ const { connect } = require("./connect");
 const { aplicarFiltro, irAPagina } = require("./filtro");
 const { abrirOperacion, descargarPdfOperacion, volverALista } = require("./operaciones");
 const { mantenerSesion } = require("./sesion");
-const { guardar } = require("./download");
+const { guardar, guardarReporte } = require("./download");
 const { limpiar, fechaArchivo, formatMonto } = require("./utils");
 
 function hoyDDMMYYYY(offsetDias = 0) {
@@ -41,7 +41,14 @@ async function preguntarFechas() {
 
     const { fechaDesde, fechaHasta } = await preguntarFechas();
 
-    const { page } = await connect(msg => console.log(msg));
+    const logs = [];
+    const registrar = (...args) => {
+        const msg = args.join(" ");
+        console.log(msg);
+        logs.push(msg);
+    };
+
+    const { page } = await connect(msg => registrar(msg));
 
     await page.goto("https://www.tlcbcp.com/#/h/bandeja-consulta");
     await page.waitForTimeout(1000);
@@ -50,11 +57,11 @@ async function preguntarFechas() {
 
     let { operations, totalPages } = await aplicarFiltro(page, fechaDesde, fechaHasta);
 
-    console.log(`Filtro aplicado: ${totalPages} página(s) de resultados.`);
+    registrar(`Filtro aplicado: ${totalPages} página(s) de resultados.`);
 
     while (true) {
 
-        console.log(`--- Página ${paginaActual} (${operations.length} operaciones) ---`);
+        registrar(`--- Página ${paginaActual} (${operations.length} operaciones) ---`);
 
         for (let i = 0; i < operations.length; i++) {
 
@@ -66,7 +73,7 @@ async function preguntarFechas() {
             const nombre = `${fechaArchivo(op.sendingDate)} - ${limpiar(op.targetBeneficiary)} - S ${monto}.pdf`;
 
             if (op.targetBeneficiary === "Varios beneficiarios") {
-                console.log("⏭ Omitido (Varios beneficiarios):", nombre);
+                registrar(`⏭ Omitido (Varios beneficiarios): ${nombre}`);
                 continue;
             }
 
@@ -90,13 +97,13 @@ async function preguntarFechas() {
                 const pdf = await descargarPdfOperacion(page);
                 const nombreGuardado = guardar(nombre, pdf.data);
 
-                console.log("✓", nombreGuardado);
+                registrar(`✓ ${nombreGuardado}`);
 
                 await volverALista(page);
 
             } catch (err) {
 
-                console.log("✗ Error con", nombre, "-", err.message);
+                registrar(`✗ Error con ${nombre} - ${err.message}`);
                 await volverALista(page).catch(() => {});
 
                 // Último recurso: si ni el reintento de abrirOperacion ni
@@ -109,7 +116,7 @@ async function preguntarFechas() {
                 // lo destraba, igual que hacerlo manualmente.
                 try {
 
-                    console.log("↺ Reintentando con recarga completa + reaplicar filtro...");
+                    registrar("↺ Reintentando con recarga completa + reaplicar filtro...");
 
                     await page.goto("https://www.tlcbcp.com/#/h/bandeja-consulta");
                     await page.waitForTimeout(1000);
@@ -124,13 +131,13 @@ async function preguntarFechas() {
                     const pdf = await descargarPdfOperacion(page);
                     const nombreGuardado = guardar(nombre, pdf.data);
 
-                    console.log("✓ (recuperado)", nombreGuardado);
+                    registrar(`✓ (recuperado) ${nombreGuardado}`);
 
                     await volverALista(page);
 
                 } catch (err2) {
 
-                    console.log("✗ Falló también tras recarga completa:", nombre, "-", err2.message);
+                    registrar(`✗ Falló también tras recarga completa: ${nombre} - ${err2.message}`);
                     await volverALista(page).catch(() => {});
                 }
             }
@@ -143,6 +150,13 @@ async function preguntarFechas() {
         operations = await irAPagina(page, paginaActual);
     }
 
-    console.log("Proceso terminado.");
+    registrar("Proceso terminado.");
+
+    try {
+        const nombreReporte = guardarReporte(logs);
+        console.log(`Reporte guardado como: ${nombreReporte}`);
+    } catch (errReporte) {
+        console.error(`No se pudo guardar el archivo de reporte: ${errReporte.message}`);
+    }
 
 })();

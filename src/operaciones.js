@@ -18,71 +18,88 @@ const { mantenerSesion } = require("./sesion");
 // DOM aunque los datos ya estén cargados, así que buscarlas sin scrollear
 // primero siempre falla. Vamos bajando el scroll de a poco en cada
 // reintento para ir "despertando" más filas hasta encontrar la buscada.
-async function indiceFilaPorMonto(page, beneficiario, monto, timeoutMs = 15000) {
+async function encontrarElementoFila(page, beneficiario, monto, timeoutMs = 15000) {
 
     const inicio = Date.now();
 
-    // Al volver a la lista, la tabla puede tardar en re-renderizar/traer
-    // los datos de nuevo (más que el timeout fijo que esperábamos antes).
-    // Reintentamos en vez de buscar una sola vez, para no fallar en falso
-    // mientras la tabla todavía está cargando.
     while (Date.now() - inicio < timeoutMs) {
 
-        const indice = await page.evaluate(({ beneficiario, monto }) => {
+        const handle = await page.evaluateHandle(({ beneficiario, monto }) => {
+            const normalizar = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+            const bNorm = normalizar(beneficiario);
 
             const candidatos = [...document.querySelectorAll("body *")].filter(
-                el => el.childElementCount === 0 && el.textContent.trim() === beneficiario
+                el => el.childElementCount === 0 && normalizar(el.textContent) === bNorm
             );
 
             for (let i = 0; i < candidatos.length; i++) {
-
                 let nodo = candidatos[i];
-
                 for (let subida = 0; subida < 8 && nodo; subida++) {
-
-                    if (nodo.textContent.includes(monto))
-                        return i;
-
+                    if (nodo.textContent.includes(monto)) {
+                        return candidatos[i];
+                    }
                     nodo = nodo.parentElement;
                 }
             }
-
-            return -1;
-
+            return null;
         }, { beneficiario, monto });
 
-        if (indice !== -1)
-            return indice;
+        const elemento = handle.asElement();
+        if (elemento) {
+            return elemento;
+        } else {
+            await handle.dispose().catch(() => {});
+        }
 
-        // El modal de "tu sesión está por expirar" puede aparecer justo
-        // en medio de esta búsqueda (que puede tardar hasta `timeoutMs`
-        // completos con scroll incluido) y queda tapando la tabla — sin
-        // esto, el scroll de más abajo no sirve de nada porque las filas
-        // reales quedan cubiertas por el modal, y el proceso se queda
-        // "scrolleando" indefinidamente sin encontrar nunca la fila.
         await mantenerSesion(page).catch(() => {});
 
-        // Bajamos el scroll para que el scroll virtual renderice más filas
-        // antes del siguiente intento. Si ya llegamos al fondo, volvemos
-        // arriba por si la fila buscada está más arriba de donde creíamos
-        // (p. ej. la tabla se re-renderizó de cero entre intentos).
-        const llegoAlFondo = await page.evaluate(() => {
-            const antes = window.scrollY;
-            window.scrollBy(0, window.innerHeight * 0.8);
-            return window.scrollY === antes;
+        // Bajamos el scroll en cualquier contenedor scrollable o en la ventana
+        // para que el scroll virtual renderice más filas.
+        const scrollExitoso = await page.evaluate(() => {
+            let check = false;
+            const elementos = document.querySelectorAll('*');
+            for (const el of elementos) {
+                const style = window.getComputedStyle(el);
+                const isScrollable = (style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+                if (isScrollable) {
+                    const antes = el.scrollTop;
+                    el.scrollTop += el.clientHeight * 0.8;
+                    if (el.scrollTop !== antes) {
+                        check = true;
+                    }
+                }
+            }
+            if (!check) {
+                const antes = window.scrollY;
+                window.scrollBy(0, window.innerHeight * 0.8);
+                check = window.scrollY !== antes;
+            }
+            return check;
         });
 
-        if (llegoAlFondo)
-            await page.evaluate(() => window.scrollTo(0, 0));
+        // Si no se pudo hacer scroll (llegamos al fondo), volvemos al inicio de todo
+        if (!scrollExitoso) {
+            await page.evaluate(() => {
+                window.scrollTo(0, 0);
+                const elementos = document.querySelectorAll('*');
+                for (const el of elementos) {
+                    const style = window.getComputedStyle(el);
+                    const isScrollable = (style.overflowY === 'auto' || style.overflowY === 'scroll');
+                    if (isScrollable) {
+                        el.scrollTop = 0;
+                    }
+                }
+            });
+        }
 
         await page.waitForTimeout(300);
     }
 
-    return -1;
+    return null;
 }
 
-// Solo se llama cuando indiceFilaPorMonto ya agotó todos los reintentos y
-// devolvió -1: junta pistas sobre POR QUÉ no se encontró la fila (¿el
+// Solo se llama cuando encontrarElementoFila ya agotó todos los reintentos y
+// devolvió null: junta pistas sobre POR QUÉ no se encontró la fila (¿el
 // nombre del beneficiario ni siquiera está en pantalla? ¿está pero con un
 // monto distinto al lado? ¿hay algo parecido con otra ortografía/espacios?)
 // para que el mensaje de error de la próxima corrida ya traiga la
@@ -91,8 +108,11 @@ async function diagnosticoFilaNoEncontrada(page, beneficiario, monto) {
 
     return await page.evaluate(({ beneficiario, monto }) => {
 
+        const normalizar = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const bNorm = normalizar(beneficiario);
+
         const exactas = [...document.querySelectorAll("body *")].filter(
-            el => el.childElementCount === 0 && el.textContent.trim() === beneficiario
+            el => el.childElementCount === 0 && normalizar(el.textContent) === bNorm
         );
 
         const montosCercanos = exactas.map(nodo => {
@@ -104,7 +124,7 @@ async function diagnosticoFilaNoEncontrada(page, beneficiario, monto) {
         const parecidos = [...document.querySelectorAll("body *")]
             .filter(el => el.childElementCount === 0)
             .map(el => el.textContent.trim())
-            .filter(t => t && t.toLowerCase().includes(beneficiario.toLowerCase().slice(0, 10)))
+            .filter(t => t && normalizar(t).includes(bNorm.slice(0, 10)))
             .slice(0, 5);
 
         return {
@@ -114,6 +134,89 @@ async function diagnosticoFilaNoEncontrada(page, beneficiario, monto) {
         };
 
     }, { beneficiario, monto }).catch(err => ({ error: err.message }));
+}
+
+function checkBeneficiarioEnTexto(textoNorm, beneficiario) {
+    const normalizar = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const bNorm = normalizar(beneficiario);
+
+    if (textoNorm.includes(bNorm))
+        return true;
+
+    // Alternativa: ver si al menos una palabra significativa (largo >= 4) coincide
+    const palabras = bNorm.split(" ").filter(w => w.length >= 4 && !["sac", "sa", "s.a", "eirl", "s.r.l", "srl"].includes(w));
+    if (palabras.length > 0) {
+        return palabras.some(w => textoNorm.includes(w));
+    }
+
+    // Si es muy corta, comparar sin espacios
+    const sinEspacios = (t) => t.replace(/\s+/g, "");
+    return sinEspacios(textoNorm).includes(sinEspacios(bNorm));
+}
+
+function obtenerVariacionesMonto(montoStr) {
+    const rawNumber = Number(montoStr.replace(/,/g, ''));
+    if (isNaN(rawNumber)) return [montoStr];
+
+    const integerPart = Math.floor(rawNumber);
+    const decimalPart = (rawNumber - integerPart).toFixed(2).slice(2); // e.g. "00"
+
+    const thousandFormats = [
+        integerPart.toString(), // 1500
+        integerPart.toLocaleString('en-US'), // 1,500
+        integerPart.toLocaleString('es-ES'), // 1.500
+        integerPart.toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ") // 1 500
+    ];
+
+    const variaciones = [];
+    for (const tf of thousandFormats) {
+        variaciones.push(`${tf}.${decimalPart}`);
+        variaciones.push(`${tf},${decimalPart}`);
+    }
+
+    if (decimalPart === "00") {
+        for (const tf of thousandFormats) {
+            variaciones.push(tf);
+        }
+    }
+
+    return [...new Set(variaciones)];
+}
+
+async function verificarDetalleOperacion(page, beneficiario, monto, timeoutMs = 8000) {
+    const normalizar = (t) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const bNorm = normalizar(beneficiario);
+    const variacionesMonto = obtenerVariacionesMonto(monto).map(v => normalizar(v));
+
+    const inicio = Date.now();
+
+    while (Date.now() - inicio < timeoutMs) {
+        const bodyText = await page.locator("body").textContent().catch(() => "");
+        const bodyNorm = normalizar(bodyText);
+
+        const tieneMonto = variacionesMonto.some(v => bodyNorm.includes(v));
+        const tieneBeneficiario = checkBeneficiarioEnTexto(bodyNorm, beneficiario);
+
+        if (tieneMonto && tieneBeneficiario) {
+            return; // Verificación exitosa
+        }
+
+        await page.waitForTimeout(500);
+    }
+
+    // Último intento antes de lanzar error
+    const bodyText = await page.locator("body").textContent().catch(() => "");
+    const bodyNorm = normalizar(bodyText);
+    const tieneMonto = variacionesMonto.some(v => bodyNorm.includes(v));
+    const tieneBeneficiario = checkBeneficiarioEnTexto(bodyNorm, beneficiario);
+
+    if (!tieneMonto || !tieneBeneficiario) {
+        throw new Error(
+            `El detalle de la operación no coincide con lo esperado. ` +
+            `Esperado: "${beneficiario}" con monto S/ ${monto} (variaciones buscadas: ${JSON.stringify(variacionesMonto)}). ` +
+            `Encontrado monto: ${tieneMonto ? "Sí" : "No"}, Encontrado beneficiario: ${tieneBeneficiario ? "Sí" : "No"}`
+        );
+    }
 }
 
 async function abrirOperacion(page, beneficiario, monto) {
@@ -134,10 +237,9 @@ async function abrirOperacion(page, beneficiario, monto) {
 
     for (let intento = 1; intento <= 2; intento++) {
 
-        const candidatos = page.getByText(beneficiario, { exact: true });
-        const indice = await indiceFilaPorMonto(page, beneficiario, monto);
+        const elemento = await encontrarElementoFila(page, beneficiario, monto);
 
-        if (indice === -1) {
+        if (!elemento) {
             const diag = await diagnosticoFilaNoEncontrada(page, beneficiario, monto);
             throw new Error(
                 `No se encontró en pantalla la fila de "${beneficiario}" con monto ${monto}. ` +
@@ -145,29 +247,39 @@ async function abrirOperacion(page, beneficiario, monto) {
             );
         }
 
-        const fila = candidatos.nth(indice);
-
         try {
 
             await Promise.all([
                 heading.waitFor({ state: "visible", timeout: 30000 }),
-                fila.click()
+                elemento.click()
             ]);
 
+            // Damos un respiro y esperamos a que el spinner desaparezca si es que ya empezó a cargar
+            await page.getByText("Cargando", { exact: true })
+                .waitFor({ state: "hidden", timeout: 25000 })
+                .catch(() => {});
+
+            // Validación defensiva crítica: verificar que realmente se cargó el detalle correcto (con sondeo)
+            await verificarDetalleOperacion(page, beneficiario, monto);
+
+            await elemento.dispose().catch(() => {});
             await page.waitForTimeout(500);
             return;
 
         } catch (err) {
 
-            // Diagnóstico extra: si el beneficiario aparece más/menos veces
-            // en pantalla de lo esperado, o el clic cayó en un elemento que
-            // no navega, esto ayuda a distinguir el caso real.
-            const totalCoincidencias = await candidatos.count().catch(() => -1);
-            err.message = `No se pudo abrir "${beneficiario}" (índice ${indice}, ${totalCoincidencias} coincidencias en pantalla, intento ${intento}/2). URL actual: ${page.url()}. ${err.message}`;
+            await elemento.dispose().catch(() => {});
+
+            err.message = `No se pudo abrir "${beneficiario}" con monto ${monto} (intento ${intento}/2). URL actual: ${page.url()}. ${err.message}`;
             ultimoError = err;
 
-            if (intento < 2)
+            if (intento < 2) {
+                // Si quedamos en la pantalla de detalle, regresamos a la lista antes de reintentar
+                if (!page.url().includes("bandeja-consulta")) {
+                    await volverALista(page).catch(() => {});
+                }
                 await page.waitForTimeout(1000);
+            }
         }
     }
 

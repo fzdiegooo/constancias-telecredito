@@ -40,7 +40,20 @@ function guardar(nombre, base64) {
     return nombreFinal;
 }
 
+function guardarReporte(logs) {
+    const carpeta = carpetaConstancias();
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const fechaHora = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+    const nombreReporte = `Reporte - ${fechaHora}.txt`;
+    const rutaReporte = path.join(carpeta, nombreReporte);
+
+    fs.writeFileSync(rutaReporte, logs.join("\n"), "utf8");
+    return nombreReporte;
+}
+
 module.exports = {
     guardar,
-    carpetaConstancias
+    carpetaConstancias,
+    guardarReporte
 };
