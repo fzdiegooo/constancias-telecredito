@@ -88,9 +88,9 @@ async function preguntarFechas() {
                 await mantenerSesion(page);
 
                 const pdf = await descargarPdfOperacion(page);
-                guardar(nombre, pdf.data);
+                const nombreGuardado = guardar(nombre, pdf.data);
 
-                console.log("✓", nombre);
+                console.log("✓", nombreGuardado);
 
                 await volverALista(page);
 
@@ -122,9 +122,9 @@ async function preguntarFechas() {
                     await mantenerSesion(page);
 
                     const pdf = await descargarPdfOperacion(page);
-                    guardar(nombre, pdf.data);
+                    const nombreGuardado = guardar(nombre, pdf.data);
 
-                    console.log("✓ (recuperado)", nombre);
+                    console.log("✓ (recuperado)", nombreGuardado);
 
                     await volverALista(page);
 

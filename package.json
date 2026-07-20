@@ -6,6 +6,7 @@
   "scripts": {
     "start": "electron .",
     "cli": "node src/index.js",
+    "abrir": "node src/abrir.js",
     "build:win": "electron-builder --win portable"
   },
   "keywords": [],

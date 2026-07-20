@@ -2,6 +2,8 @@
 // respuesta real que genera el propio clic (nunca reenvía tokens capturados)
 // y vuelve a la lista.
 
+const { mantenerSesion } = require("./sesion");
+
 // El mismo beneficiario puede aparecer varias veces en pantalla (como
 // beneficiario de otra operación, como titular de origen, en referencias,
 // etc.), así que contar "ocurrencias" del nombre no alcanza para identificar
@@ -9,6 +11,13 @@
 // la API). En su lugar buscamos, entre todas las coincidencias del nombre,
 // la que además tenga el monto de la operación cerca (mismo ancestro), que
 // es mucho menos ambiguo.
+//
+// La tabla usa scroll virtual: con 100 filas por página, solo las
+// primeras ~25 quedan realmente en el DOM al volver de una operación (la
+// lista vuelve con scroll arriba). Las filas 26+ no existen todavía en el
+// DOM aunque los datos ya estén cargados, así que buscarlas sin scrollear
+// primero siempre falla. Vamos bajando el scroll de a poco en cada
+// reintento para ir "despertando" más filas hasta encontrar la buscada.
 async function indiceFilaPorMonto(page, beneficiario, monto, timeoutMs = 15000) {
 
     const inicio = Date.now();
@@ -45,10 +54,66 @@ async function indiceFilaPorMonto(page, beneficiario, monto, timeoutMs = 15000) 
         if (indice !== -1)
             return indice;
 
+        // El modal de "tu sesión está por expirar" puede aparecer justo
+        // en medio de esta búsqueda (que puede tardar hasta `timeoutMs`
+        // completos con scroll incluido) y queda tapando la tabla — sin
+        // esto, el scroll de más abajo no sirve de nada porque las filas
+        // reales quedan cubiertas por el modal, y el proceso se queda
+        // "scrolleando" indefinidamente sin encontrar nunca la fila.
+        await mantenerSesion(page).catch(() => {});
+
+        // Bajamos el scroll para que el scroll virtual renderice más filas
+        // antes del siguiente intento. Si ya llegamos al fondo, volvemos
+        // arriba por si la fila buscada está más arriba de donde creíamos
+        // (p. ej. la tabla se re-renderizó de cero entre intentos).
+        const llegoAlFondo = await page.evaluate(() => {
+            const antes = window.scrollY;
+            window.scrollBy(0, window.innerHeight * 0.8);
+            return window.scrollY === antes;
+        });
+
+        if (llegoAlFondo)
+            await page.evaluate(() => window.scrollTo(0, 0));
+
         await page.waitForTimeout(300);
     }
 
     return -1;
+}
+
+// Solo se llama cuando indiceFilaPorMonto ya agotó todos los reintentos y
+// devolvió -1: junta pistas sobre POR QUÉ no se encontró la fila (¿el
+// nombre del beneficiario ni siquiera está en pantalla? ¿está pero con un
+// monto distinto al lado? ¿hay algo parecido con otra ortografía/espacios?)
+// para que el mensaje de error de la próxima corrida ya traiga la
+// respuesta, en vez de tener que reconectarse a mano a revisar el DOM.
+async function diagnosticoFilaNoEncontrada(page, beneficiario, monto) {
+
+    return await page.evaluate(({ beneficiario, monto }) => {
+
+        const exactas = [...document.querySelectorAll("body *")].filter(
+            el => el.childElementCount === 0 && el.textContent.trim() === beneficiario
+        );
+
+        const montosCercanos = exactas.map(nodo => {
+            let n = nodo;
+            for (let subida = 0; subida < 8 && n; subida++) n = n.parentElement;
+            return n ? n.textContent.replace(/\s+/g, " ").trim().slice(0, 200) : null;
+        });
+
+        const parecidos = [...document.querySelectorAll("body *")]
+            .filter(el => el.childElementCount === 0)
+            .map(el => el.textContent.trim())
+            .filter(t => t && t.toLowerCase().includes(beneficiario.toLowerCase().slice(0, 10)))
+            .slice(0, 5);
+
+        return {
+            coincidenciasExactas: exactas.length,
+            textoAncestro8Niveles: montosCercanos,
+            parecidos
+        };
+
+    }, { beneficiario, monto }).catch(err => ({ error: err.message }));
 }
 
 async function abrirOperacion(page, beneficiario, monto) {
@@ -72,8 +137,13 @@ async function abrirOperacion(page, beneficiario, monto) {
         const candidatos = page.getByText(beneficiario, { exact: true });
         const indice = await indiceFilaPorMonto(page, beneficiario, monto);
 
-        if (indice === -1)
-            throw new Error(`No se encontró en pantalla la fila de "${beneficiario}" con monto ${monto}.`);
+        if (indice === -1) {
+            const diag = await diagnosticoFilaNoEncontrada(page, beneficiario, monto);
+            throw new Error(
+                `No se encontró en pantalla la fila de "${beneficiario}" con monto ${monto}. ` +
+                `Diagnóstico: ${JSON.stringify(diag)}`
+            );
+        }
 
         const fila = candidatos.nth(indice);
 

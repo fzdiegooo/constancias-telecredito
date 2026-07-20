@@ -124,10 +124,10 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
                     await mantenerSesion(page);
 
                     const pdf = await descargarPdfOperacion(page);
-                    guardar(nombre, pdf.data);
+                    const nombreGuardado = guardar(nombre, pdf.data);
 
                     exitosas++;
-                    enviar("log", { tipo: "ok", texto: nombre });
+                    enviar("log", { tipo: "ok", texto: nombreGuardado });
 
                     await volverALista(page);
 
@@ -161,11 +161,11 @@ ipcMain.on("buscar-y-descargar", async (event, { fechaDesde, fechaHasta }) => {
                         await mantenerSesion(page);
 
                         const pdf = await descargarPdfOperacion(page);
-                        guardar(nombre, pdf.data);
+                        const nombreGuardado = guardar(nombre, pdf.data);
 
                         exitosas++;
                         fallidas--;
-                        enviar("log", { tipo: "ok", texto: `${nombre} (recuperado)` });
+                        enviar("log", { tipo: "ok", texto: `${nombreGuardado} (recuperado)` });
 
                         await volverALista(page);
 

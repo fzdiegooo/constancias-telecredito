@@ -112,9 +112,7 @@ async function connect(onEstado) {
         await page.goto(URL_BANCO);
     }
 
-    await minimizarVentana(context, page);
-
     return { browser, page };
 }
 
-module.exports = { connect };
+module.exports = { connect, minimizarVentana };
