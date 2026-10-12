@@ -15,7 +15,7 @@ function fechaArchivo(iso) {
     const mes = String(d.getMonth() + 1).padStart(2, "0");
     const anio = d.getFullYear();
 
-    return `${anio}-${mes}-${dia}`;
+    return `${dia}-${mes}-${anio}`;
 }
 
 function formatMonto(monto) {

@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Constancias TeleCrédito</title>
+<style>
+  :root {
+    --bcp-azul: #0a5ca8; --bcp-naranja: #EC6707; --gris: #8a8f98;
+    --borde: #e3e6ea; --fondo: #f5f6f8; --texto: #2b2b2b; --ok: #35b63a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: var(--texto); background: var(--fondo); font-size: 13px; display: flex; flex-direction: column; }
+
+  header { background: #fff; border-bottom: 1px solid var(--borde); padding: 10px 16px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .logo { font-weight: bold; font-style: italic; font-size: 20px; color: var(--bcp-azul); }
+  .logo b { color: var(--bcp-naranja); }
+  h1 { font-size: 15px; margin: 0; color: var(--bcp-azul); font-weight: 600; }
+  .stats { color: var(--gris); font-size: 12px; }
+  .acciones { margin-left: auto; display: flex; gap: 8px; }
+
+  input, select, button { font: inherit; padding: 6px 9px; border: 1px solid var(--borde); border-radius: 6px; background: #fff; }
+  button { cursor: pointer; background: var(--bcp-azul); color: #fff; border-color: var(--bcp-azul); }
+  button.sec { background: #fff; color: var(--bcp-azul); }
+  button.chip { background: #eef3f9; color: var(--bcp-azul); border-color: #d6e2f0; padding: 5px 10px; }
+  button:disabled { opacity: .5; cursor: default; }
+  label.inline { color: var(--gris); display: flex; align-items: center; gap: 5px; }
+
+  .tabs { display: flex; gap: 4px; background: #fff; border-bottom: 1px solid var(--borde); padding: 0 12px; }
+  .tabs button { background: none; border: none; color: var(--gris); padding: 10px 16px; border-bottom: 2px solid transparent; border-radius: 0; font-weight: 600; }
+  .tabs button.activo { color: var(--bcp-azul); border-bottom-color: var(--bcp-naranja); }
+
+  .cuerpo { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  section.tab { flex: 1; min-height: 0; display: none; flex-direction: column; }
+  section.tab.activo { display: flex; }
+
+  .filtros { background: #fff; border-bottom: 1px solid var(--borde); padding: 8px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .filtros input, .filtros select { padding: 5px 8px; }
+
+  .split { flex: 1; min-height: 0; display: flex; }
+  .izq { width: 62%; min-width: 320px; display: flex; flex-direction: column; overflow: hidden; }
+  .divisor { width: 6px; cursor: col-resize; background: var(--borde); flex: 0 0 auto; }
+  .divisor:hover { background: var(--bcp-naranja); }
+  .der { flex: 1; min-width: 260px; display: flex; flex-direction: column; background: #fff; position: relative; }
+  body.sin-visor .divisor, body.sin-visor .der { display: none; }
+  body.sin-visor .izq { width: 100% !important; }
+
+  .tabla-wrap { flex: 1; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: #fff; text-align: left; color: var(--gris); font-weight: 600; font-size: 11px; padding: 6px 8px; border-bottom: 1px solid var(--borde); white-space: nowrap; z-index: 1; }
+  td { padding: 3px 8px; border-bottom: 1px solid #f1f3f5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+  td.monto, th.monto { max-width: none; }
+  tr.op { cursor: pointer; }
+  tr.op:hover { background: #f0f6ff; }
+  tr.op.sel { background: #e3eefb; }
+  .monto { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .badge { font-size: 10px; padding: 1px 6px; border-radius: 20px; }
+  .b-descargado { background: #e3f6e5; color: #1f8a2b; }
+  .b-generado { background: #e8eefb; color: #2a5fb0; }
+  .b-cliente_pendiente { background: #fff3dc; color: #a66a00; }
+  .b-error { background: #fde3e3; color: #b42727; }
+  .b-pendiente, .b-no_soportado { background: #eceef1; color: #6b7280; }
+
+  .pv-top { padding: 7px 12px; border-bottom: 1px solid var(--borde); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pv-top .t { font-weight: 600; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pv-top .s { color: var(--gris); }
+  .pv-top .sp { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .zoomctl { display: flex; align-items: center; gap: 2px; }
+  .zoomctl button { padding: 3px 9px; }
+  .zoomctl .z { min-width: 46px; text-align: center; color: var(--gris); }
+  .pv-scroll { flex: 1; overflow: auto; background: #525659; padding: 16px; display: none; text-align: center; }
+  .pv-scroll canvas { display: inline-block; margin: 0 auto 12px; box-shadow: 0 1px 8px rgba(0,0,0,.45); background: #fff; }
+  .pv-cargando { position: absolute; top: 44px; left: 0; right: 0; text-align: center; color: #cfe3ff; font-size: 12px; padding: 8px; pointer-events: none; opacity: 0; transition: opacity .15s; }
+  .pv-cargando.on { opacity: .9; }
+  .vacio { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--gris); text-align: center; padding: 20px; }
+
+  .panel { background: #fff; padding: 16px; max-width: 720px; }
+  .panel h2 { font-size: 14px; color: var(--bcp-azul); margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .panel h2::before { content: ""; width: 4px; height: 15px; background: var(--bcp-naranja); display: inline-block; }
+  .fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .log { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: #0f1b2d; color: #cfe3ff; border-radius: 6px; padding: 8px 10px; height: 260px; overflow-y: auto; margin-top: 10px; white-space: pre-wrap; display: none; }
+  .log .ok { color: #8ee89a; } .log .error { color: #ff9b9b; } .log .omitido { color: #ffd27a; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">&rsaquo;<b>BCP</b>&rsaquo;</span>
+  <h1>Constancias TeleCrédito</h1>
+  <span class="stats" id="stats">Cargando…</span>
+  <div class="acciones">
+    <button class="sec" id="btnCarpeta">📂 Abrir carpeta</button>
+    <button class="sec" id="btnToggleVisor">Ocultar visor</button>
+  </div>
+</header>
+
+<div class="tabs">
+  <button data-tab="explorar" class="activo">Explorar</button>
+  <button data-tab="sync">Sincronizar</button>
+</div>
+
+<div class="cuerpo">
+
+  <!-- ===== EXPLORAR ===== -->
+  <section class="tab activo" id="tab-explorar">
+    <div class="filtros">
+      <input id="q" placeholder="Buscar beneficiario, referencia, nº…" style="flex:1; min-width:160px">
+      <select id="fEmpresa"><option value="">Todas las empresas</option></select>
+      <select id="fProduct"><option value="">Todos los tipos</option></select>
+      <select id="fMoneda"><option value="">S/ y $</option><option value="001">Soles</option><option value="002">Dólares</option></select>
+      <select id="fEstado">
+        <option value="">Todo PDF</option>
+        <option value="descargado">Descargado</option>
+        <option value="generado">Generado</option>
+        <option value="cliente_pendiente">Pendiente</option>
+        <option value="error">Error</option>
+      </select>
+    </div>
+
+    <div class="split" id="split">
+      <div class="izq" id="izq">
+        <div class="tabla-wrap">
+          <table>
+            <thead><tr>
+              <th>Fecha</th><th>Empresa</th><th>Beneficiario</th><th>Referencia</th>
+              <th class="monto">Monto</th><th>Tipo</th><th>PDF</th>
+            </tr></thead>
+            <tbody id="filas"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="divisor" id="divisor"></div>
+
+      <div class="der" id="der">
+        <div class="pv-top">
+          <span class="t" id="pvTitulo">Vista previa</span>
+          <span class="s" id="pvSub"></span>
+          <div class="sp">
+            <div class="zoomctl">
+              <button class="sec" id="zOut">−</button>
+              <span class="z" id="zLbl">Ajuste</span>
+              <button class="sec" id="zIn">+</button>
+              <button class="sec" id="zFit">Ajustar</button>
+            </div>
+            <a class="btnlink" id="pvAbrir" target="_blank"><button class="sec" style="display:none" id="pvBtn">Abrir ↗</button></a>
+          </div>
+        </div>
+        <div class="pv-cargando" id="pvCargando">Cargando…</div>
+        <div class="vacio" id="pvVacio">Selecciona una constancia (o usa ↑ / ↓).</div>
+        <div class="pv-scroll" id="pvScroll"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SINCRONIZAR ===== -->
+  <section class="tab" id="tab-sync">
+    <div class="panel">
+      <h2>Sincronizar (alimentar la base)</h2>
+      <div class="fila">
+        <button class="sec" id="btnAbrir">1. Abrir navegador</button>
+        <span id="estadoAbrir" style="color:var(--gris)">Luego inicia sesión en el banco</span>
+      </div>
+      <div class="fila">
+        <label class="inline">Desde <input type="date" id="desde"></label>
+        <label class="inline">Hasta <input type="date" id="hasta"></label>
+        <button class="chip" data-dias="0">Hoy</button>
+        <button class="chip" data-dias="7">7 días</button>
+        <button class="chip" data-dias="30">30 días</button>
+        <label class="inline"><input type="checkbox" id="forzar"> Re-descargar</label>
+        <button id="btnSync">2. Sincronizar</button>
+      </div>
+      <div class="log" id="log"></div>
+    </div>
+  </section>
+
+</div>
+
+<script src="/vendor/pdf.min.js"></script>
+<script>
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.js";
+
+const PRODUCTOS = {
+  TXTHIRDPARTIES: "Transf. terceros", TXOWNER: "Transf. propias", TXDEFERRED: "Transf. diferida",
+  SERVICES_PAYMENT: "Pago servicios", PAYMENT_DOCUMENTS: "Letras/facturas",
+  MP_SALARIES: "Haberes", PAGELE_PAYMENT: "Pago letras", PAGELE_REQUEST: "Solicitud letras"
+};
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s==null?"":s).replace(/</g,"&lt;");
+const fmtFecha = (iso) => iso ? iso.slice(0,10).split("-").reverse().join("/") : "";
+const fmtMonto = (m, c) => (c==="002"?"$":"S/") + " " + Number(m||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const aDMY = (v) => v.split("-").reverse().join("-");
+
+const pref = {
+  get(k, def) { try { const v = localStorage.getItem("ctc_"+k); return v==null?def:JSON.parse(v); } catch { return def; } },
+  set(k, v) { try { localStorage.setItem("ctc_"+k, JSON.stringify(v)); } catch {} }
+};
+
+/* ===== Pestañas ===== */
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("activo", x===b));
+  document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("activo", s.id==="tab-"+b.dataset.tab));
+});
+
+/* ===== Visor PDF (pdf.js, caché, prefetch, zoom) ===== */
+const docCache = new Map();
+let renderToken = 0;
+let idActual = null;
+let zoom = pref.get("zoom", 1);
+let visorOn = pref.get("visor", true);
+
+function loadDoc(id) {
+  if (!docCache.has(id)) docCache.set(id, pdfjsLib.getDocument("/api/pdf/" + id).promise);
+  return docCache.get(id);
+}
+function mostrarCargando(on) { $("#pvCargando").classList.toggle("on", on); }
+function lblZoom() { $("#zLbl").textContent = Math.round(zoom*100) + "%"; }
+
+async function renderPdf(id) {
+  if (!visorOn) return;
+  const token = ++renderToken;
+  const cont = $("#pvScroll");
+  cont.innerHTML = "";
+  mostrarCargando(true);
+  try {
+    const doc = await loadDoc(id);
+    if (token !== renderToken) return;
+    const dpr = window.devicePixelRatio || 1;
+    const base = Math.max(280, cont.clientWidth - 32);
+    const ancho = base * zoom;
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      if (token !== renderToken) return;
+      const scale = ancho / page.getViewport({ scale: 1 }).width;
+      const vp = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.floor(vp.width*dpr); canvas.height = Math.floor(vp.height*dpr);
+      canvas.style.width = vp.width+"px"; canvas.style.height = vp.height+"px";
+      const ctx = canvas.getContext("2d"); ctx.scale(dpr,dpr);
+      cont.appendChild(canvas);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      if (token !== renderToken) return;
+    }
+    cont.scrollTop = 0;
+  } catch (e) {
+    if (token === renderToken) cont.innerHTML = '<div style="color:#ff9b9b;padding:20px">No se pudo abrir el PDF.</div>';
+  } finally {
+    if (token === renderToken) mostrarCargando(false);
+  }
+}
+function reRender() { if (idActual != null && visorOn) renderPdf(idActual); }
+
+function prefetchVecinos(tr) {
+  const fs = filas(); const i = fs.indexOf(tr);
+  for (const j of [i-1, i+1]) {
+    const o = fs[j]; if (!o) continue;
+    const e = o.dataset.estado;
+    if (e==="descargado" || e==="generado") loadDoc(+o.dataset.id).catch(()=>{});
+  }
+}
+
+/* zoom */
+function setZoom(z) { zoom = Math.min(4, Math.max(0.3, z)); pref.set("zoom", zoom); lblZoom(); reRender(); }
+$("#zIn").onclick = () => setZoom(zoom*1.25);
+$("#zOut").onclick = () => setZoom(zoom*0.8);
+$("#zFit").onclick = () => setZoom(1);
+
+/* toggle visor */
+function aplicarVisor() {
+  document.body.classList.toggle("sin-visor", !visorOn);
+  $("#btnToggleVisor").textContent = visorOn ? "Ocultar visor" : "Mostrar visor";
+  if (visorOn) reRender();
+}
+$("#btnToggleVisor").onclick = () => { visorOn = !visorOn; pref.set("visor", visorOn); aplicarVisor(); };
+
+/* ===== Selección y flechas ===== */
+function filas() { return [...document.querySelectorAll("tr.op")]; }
+function filaSeleccionada() { return document.querySelector("tr.op.sel"); }
+function seleccionar(tr) { if (!tr) return; verPdf(tr); tr.scrollIntoView({ block: "nearest" }); }
+function mover(delta) {
+  const fs = filas(); if (!fs.length) return;
+  let i = fs.indexOf(filaSeleccionada());
+  if (i < 0) i = delta > 0 ? -1 : 0;
+  seleccionar(fs[Math.min(fs.length-1, Math.max(0, i+delta))]);
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const t = document.activeElement;
+  if (t && (t.tagName==="INPUT" || t.tagName==="SELECT" || t.tagName==="TEXTAREA")) return;
+  if (!$("#tab-explorar").classList.contains("activo")) return;
+  e.preventDefault();
+  mover(e.key === "ArrowDown" ? 1 : -1);
+});
+
+function verPdf(tr) {
+  const id = +tr.dataset.id, estado = tr.dataset.estado;
+  document.querySelectorAll("tr.op.sel").forEach(t => t.classList.remove("sel"));
+  tr.classList.add("sel");
+  idActual = id;
+  $("#pvTitulo").textContent = tr.dataset.benef || "";
+  $("#pvSub").textContent = tr.dataset.fecha || "";
+
+  const tienePdf = estado === "descargado" || estado === "generado";
+  if (tienePdf) {
+    $("#pvAbrir").href = "/api/pdf/" + id; $("#pvBtn").style.display = "inline-block";
+    if (visorOn) { $("#pvVacio").style.display = "none"; $("#pvScroll").style.display = "block"; renderPdf(id); prefetchVecinos(tr); }
+  } else {
+    renderToken++;
+    $("#pvScroll").style.display = "none"; $("#pvBtn").style.display = "none";
+    $("#pvVacio").style.display = "flex";
+    $("#pvVacio").textContent = "Esta operación aún no tiene PDF (estado: " + estado + ").";
+  }
+}
+
+/* ===== Datos ===== */
+async function cargarStats() {
+  const s = await (await fetch("/api/stats")).json();
+  $("#stats").innerHTML = `<b>${s.total}</b> constancias · ${(s.rango.min||"—")} a ${(s.rango.max||"—")}`;
+  const sp = $("#fProduct");
+  if (sp.options.length <= 1)
+    for (const t of s.porTipo) sp.insertAdjacentHTML("beforeend", `<option value="${t.product}">${PRODUCTOS[t.product]||t.product} (${t.c})</option>`);
+  const se = $("#fEmpresa");
+  if (se.options.length <= 1)
+    for (const e of s.empresas) se.insertAdjacentHTML("beforeend", `<option value="${esc(e.e)}">${esc(e.e)} (${e.c})</option>`);
+}
+
+async function cargarLista() {
+  const p = new URLSearchParams({
+    q: $("#q").value, product: $("#fProduct").value,
+    empresa: $("#fEmpresa").value, moneda: $("#fMoneda").value, pdf_estado: $("#fEstado").value
+  });
+  const { operaciones } = await (await fetch("/api/operaciones?"+p)).json();
+  $("#filas").innerHTML = operaciones.map(o => {
+    const benef = o.targetBeneficiary || o.reference || "";
+    return `<tr class="op" data-id="${o.requestId}" data-estado="${o.pdf_estado}"
+                data-benef="${esc(benef)}" data-fecha="${fmtFecha(o.sendingDate)}">
+      <td>${fmtFecha(o.sendingDate)}</td>
+      <td title="${esc(o.sourceCompany||"")}">${esc(o.sourceCompany||"")}</td>
+      <td title="${esc(benef)}">${esc(benef)}</td>
+      <td title="${esc(o.reference||"")}">${esc(o.reference||"")}</td>
+      <td class="monto">${fmtMonto(o.amount, o.currencyCode)}</td>
+      <td>${PRODUCTOS[o.product]||o.product}</td>
+      <td><span class="badge b-${o.pdf_estado}">${o.pdf_estado}</span></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="7" style="color:var(--gris);padding:20px">Sin resultados.</td></tr>`;
+  document.querySelectorAll("tr.op").forEach(tr => tr.onclick = () => verPdf(tr));
+}
+
+/* ===== Abrir carpeta ===== */
+$("#btnCarpeta").onclick = async () => {
+  try { await fetch("/api/abrir-carpeta", { method: "POST" }); } catch {}
+};
+
+/* ===== Divisor redimensionable ===== */
+(function () {
+  const split = $("#split"), izq = $("#izq"), div = $("#divisor");
+  const guardado = pref.get("izqpc", null);
+  if (guardado) izq.style.width = guardado + "%";
+  let arrastrando = false;
+  div.addEventListener("mousedown", () => { arrastrando = true; document.body.style.userSelect = "none"; });
+  window.addEventListener("mouseup", () => { if (arrastrando) { arrastrando = false; document.body.style.userSelect = ""; reRender(); } });
+  window.addEventListener("mousemove", (e) => {
+    if (!arrastrando) return;
+    const r = split.getBoundingClientRect();
+    let pc = ((e.clientX - r.left) / r.width) * 100;
+    pc = Math.min(80, Math.max(25, pc));
+    izq.style.width = pc + "%";
+    pref.set("izqpc", Math.round(pc));
+  });
+})();
+
+/* ===== Sincronizar ===== */
+function logLinea(linea) {
+  const box = $("#log"); box.style.display = "block";
+  const tipo = linea.startsWith("✓") ? "ok" : linea.startsWith("✗") ? "error" : (linea.startsWith("◧")||linea.startsWith("⏭")) ? "omitido" : "";
+  const div = document.createElement("div"); if (tipo) div.className = tipo; div.textContent = linea;
+  box.appendChild(div); box.scrollTop = box.scrollHeight;
+}
+$("#btnAbrir").onclick = async () => {
+  $("#btnAbrir").disabled = true; $("#estadoAbrir").textContent = "Abriendo…";
+  try { const r = await (await fetch("/api/abrir", { method: "POST" })).json(); $("#estadoAbrir").textContent = (r.ok?"✓ ":"✗ ") + r.mensaje; }
+  catch (e) { $("#estadoAbrir").textContent = "✗ " + e.message; }
+  $("#btnAbrir").disabled = false;
+};
+document.querySelectorAll(".chip[data-dias]").forEach(b => b.onclick = () => {
+  const hoy = new Date(); const d = new Date(); d.setDate(hoy.getDate() - Number(b.dataset.dias));
+  $("#hasta").value = hoy.toISOString().slice(0,10);
+  $("#desde").value = d.toISOString().slice(0,10);
+});
+$("#btnSync").onclick = async () => {
+  if (!$("#desde").value || !$("#hasta").value) { alert("Elige fechas desde/hasta."); return; }
+  $("#btnSync").disabled = true; $("#log").innerHTML = ""; $("#log").style.display = "block";
+  const resp = await fetch("/api/sync", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ desde: aDMY($("#desde").value), hasta: aDMY($("#hasta").value), forzar: $("#forzar").checked })
+  });
+  if (!resp.ok) { logLinea("✗ " + (await resp.json()).error); $("#btnSync").disabled = false; return; }
+  const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  while (true) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const bloque = buf.slice(0, idx); buf = buf.slice(idx + 2);
+      const ev = (bloque.match(/^event: (.+)$/m) || [])[1];
+      const dm = bloque.match(/^data: (.+)$/m); if (!dm) continue;
+      const datos = JSON.parse(dm[1]);
+      if (ev === "log") logLinea(datos.linea);
+      else if (ev === "error") logLinea("✗ " + datos.mensaje);
+      else if (ev === "fin") logLinea(`✔ Terminado. Nuevos: ${datos.exitosas}, ya existían: ${datos.yaExistentes}, errores: ${datos.fallidas}, pendientes: ${datos.clientePendiente}`);
+    }
+  }
+  $("#btnSync").disabled = false;
+  docCache.clear();
+  cargarStats(); cargarLista();
+};
+
+/* ===== Init ===== */
+["#q","#fProduct","#fEmpresa","#fMoneda","#fEstado"].forEach(s => $(s).addEventListener("input", cargarLista));
+window.addEventListener("resize", () => { clearTimeout(window._rz); window._rz = setTimeout(reRender, 250); });
+lblZoom(); aplicarVisor();
+cargarStats(); cargarLista();
+</script>
+</body>
+</html>

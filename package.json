@@ -4,9 +4,10 @@
   "description": "Descarga automática de constancias de operaciones de TeleCrédito BCP",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "cli": "node src/index.js",
+    "gui": "node --no-warnings src/server.js",
+    "sync": "node --no-warnings src/apicli.js",
     "abrir": "node src/abrir.js",
+    "start": "electron .",
     "build:win": "electron-builder --win portable"
   },
   "keywords": [],
@@ -25,8 +26,6 @@
     "productName": "Constancias TeleCredito",
     "files": [
       "main.js",
-      "preload.js",
-      "renderer/**/*",
       "src/**/*",
       "package.json"
     ],

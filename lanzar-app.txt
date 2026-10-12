@@ -1,0 +1,1 @@
+cd /home/fzdiegooo/proyectos/constancias-telecredito && env -u ELECTRON_RUN_AS_NODE node_modules/electron/dist/electron . --no-sandbox

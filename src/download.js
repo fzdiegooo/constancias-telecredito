@@ -4,7 +4,8 @@ const os = require("os");
 
 function carpetaConstancias() {
 
-    const carpeta = path.join(os.homedir(), "Documents", "Constancias TeleCredito");
+    const carpeta = process.env.CONSTANCIAS_DIR
+        || path.join(os.homedir(), "Documents", "Constancias TeleCredito");
 
     if (!fs.existsSync(carpeta))
         fs.mkdirSync(carpeta, { recursive: true });
