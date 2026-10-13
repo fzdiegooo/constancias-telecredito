@@ -26,96 +26,136 @@ function hoyDDMMYYYY(offsetDias = 0) {
     return `${dia}-${mes}-${d.getFullYear()}`;
 }
 
+// Error interno para señalar que el usuario pidió cancelar la sincronización.
+class CancelacionError extends Error {
+    constructor() { super("Sincronización cancelada por el usuario."); this.name = "CancelacionError"; }
+}
+
+const dormir = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Punto de control cooperativo: se llama entre operaciones (y entre páginas/
+// tramos de la búsqueda). Si el usuario pausó, se queda esperando aquí; si
+// canceló, lanza CancelacionError para abortar de forma limpia. `control` es
+// un objeto compartido { pausado, cancelado } que la GUI muta vía /api/sync/control.
+async function checkpoint(control, log) {
+    if (!control) return;
+    if (control.cancelado) throw new CancelacionError();
+    if (!control.pausado) return;
+    log("⏸ Pausado. Pulsa «Reanudar» para continuar.");
+    while (control.pausado && !control.cancelado) await dormir(300);
+    if (control.cancelado) throw new CancelacionError();
+    log("▶ Reanudado.");
+}
+
 async function correr(fechaDesde, fechaHasta, log = console.log, opciones = {}) {
     const forzar = !!opciones.forzar;
+    const control = opciones.control || null;
     const db = abrir();
-    log(`Base de datos: ${require("./db").rutaBaseDatos()}`);
+    let sesion = null;
 
-    log("Conectando al navegador y capturando token...");
-    const sesion = await crearSesion(log);
-    log(`Token OK (expira en ${sesion.expSegundos()}s).`);
+    let exitosas = 0, fallidas = 0, clientePendiente = 0, yaExistentes = 0;
+    let total = 0, cancelado = false;
 
-    log(`Buscando operaciones ${fechaDesde} a ${fechaHasta}...`);
-    const ops = await buscarTodas(sesion, fechaDesde, fechaHasta, log);
-    log(`Encontradas ${ops.length} operaciones.`);
+    try {
+        log(`Base de datos: ${require("./db").rutaBaseDatos()}`);
 
-    // Guardar TODOS los datos primero (aunque luego falle algún PDF).
-    for (const op of ops) guardarOperacion(db, op);
-    log(`Datos de ${ops.length} operaciones guardados en SQLite.`);
+        log("Conectando al navegador y capturando token...");
+        sesion = await crearSesion(log);
+        log(`Token OK (expira en ${sesion.expSegundos()}s).`);
 
-    let exitosas = 0, fallidas = 0, clientePendiente = 0, noSoportadas = 0, yaExistentes = 0;
+        log(`Buscando operaciones ${fechaDesde} a ${fechaHasta}...`);
+        const ops = await buscarTodas(sesion, fechaDesde, fechaHasta, log, () => checkpoint(control, log));
+        total = ops.length;
+        log(`Encontradas ${ops.length} operaciones.`);
 
-    for (let i = 0; i < ops.length; i++) {
-        const op = ops[i];
-        const monto = formatMonto(op.amount);
-        const etiqueta = limpiar(op.targetBeneficiary || op.reference || String(op.requestId));
-        const nombre = `${fechaArchivo(op.sendingDate)} - ${etiqueta} - S ${monto}.pdf`;
-        const pos = `[${i + 1}/${ops.length}]`;
+        // Guardar TODOS los datos primero (aunque luego falle algún PDF).
+        for (const op of ops) guardarOperacion(db, op);
+        log(`Datos de ${ops.length} operaciones guardados en SQLite.`);
 
-        // Sync incremental: si el PDF ya estaba listo, no lo re-descargamos.
-        if (!forzar) {
-            const previo = estadoPdf(db, op.requestId);
-            if (previo && PDF_LISTO.has(previo.pdf_estado)) {
-                yaExistentes++;
-                continue;
-            }
-        }
+        for (let i = 0; i < ops.length; i++) {
+            // Pausa/cancelación cooperativa entre cada operación.
+            await checkpoint(control, log);
 
-        try {
+            const op = ops[i];
+            const monto = formatMonto(op.amount);
+            const etiqueta = limpiar(op.targetBeneficiary || op.reference || String(op.requestId));
+            const nombre = `${fechaArchivo(op.sendingDate)} - ${etiqueta} - S ${monto}.pdf`;
+            const pos = `[${i + 1}/${ops.length}]`;
 
-            if (esTransferencia(op.product)) {
-                const base64 = await descargarPdfTransferencia(sesion, op.requestId, op.product);
-                const archivo = guardar(nombre, base64);
-                marcarPdf(db, op.requestId, "descargado", archivo);
-                exitosas++;
-                log(`✓ ${pos} ${archivo}`);
-
-            } else if (op.product === "MP_SALARIES") {
-                const { base64 } = await descargarArchivoHaberes(sesion, op.requestId, "P");
-                const nombreHaberes = `${fechaArchivo(op.sendingDate)} - HABERES ${op.requestId} - S ${monto}.pdf`;
-                const archivo = guardar(nombreHaberes, base64);
-                marcarPdf(db, op.requestId, "descargado", archivo);
-                exitosas++;
-                log(`✓ ${pos} ${archivo}`);
-
-            } else {
-                // Tipos cuyo PDF el banco arma en cliente (servicios, documentos):
-                // traemos el detalle rico, lo guardamos y generamos una
-                // constancia propia con el estilo del banco (constancia.js).
-                const detalle = await obtenerDetalle(sesion, op.product, op.requestId);
-                if (detalle) guardarDetalle(db, op.requestId, detalle);
-
-                const html = construirHtml(op, detalle);
-
-                if (html) {
-                    const base64 = await sesion.renderizarPdf(html);
-                    const archivo = guardar(nombre, base64);
-                    marcarPdf(db, op.requestId, "generado", archivo);
-                    exitosas++;
-                    log(`✓ ${pos} ${archivo} (constancia generada)`);
-                } else {
-                    // Tipos sin detalle/plantilla aún (PAGELE_*): solo datos.
-                    marcarPdf(db, op.requestId, "cliente_pendiente");
-                    clientePendiente++;
-                    log(`◧ ${pos} ${op.product} (datos guardados, sin plantilla): ${nombre}`);
+            // Sync incremental: si el PDF ya estaba listo, no lo re-descargamos.
+            if (!forzar) {
+                const previo = estadoPdf(db, op.requestId);
+                if (previo && PDF_LISTO.has(previo.pdf_estado)) {
+                    yaExistentes++;
+                    continue;
                 }
             }
 
-        } catch (err) {
-            fallidas++;
-            marcarPdf(db, op.requestId, "error", null, err.message);
-            log(`✗ ${pos} ${nombre} — ${err.message}`);
+            try {
+
+                if (esTransferencia(op.product)) {
+                    const base64 = await descargarPdfTransferencia(sesion, op.requestId, op.product);
+                    const archivo = guardar(nombre, base64);
+                    marcarPdf(db, op.requestId, "descargado", archivo);
+                    exitosas++;
+                    log(`✓ ${pos} ${archivo}`);
+
+                } else if (op.product === "MP_SALARIES") {
+                    const { base64 } = await descargarArchivoHaberes(sesion, op.requestId, "P");
+                    const nombreHaberes = `${fechaArchivo(op.sendingDate)} - HABERES ${op.requestId} - S ${monto}.pdf`;
+                    const archivo = guardar(nombreHaberes, base64);
+                    marcarPdf(db, op.requestId, "descargado", archivo);
+                    exitosas++;
+                    log(`✓ ${pos} ${archivo}`);
+
+                } else {
+                    // Tipos cuyo PDF el banco arma en cliente (servicios, documentos):
+                    // traemos el detalle rico, lo guardamos y generamos una
+                    // constancia propia con el estilo del banco (constancia.js).
+                    const detalle = await obtenerDetalle(sesion, op.product, op.requestId);
+                    if (detalle) guardarDetalle(db, op.requestId, detalle);
+
+                    const html = construirHtml(op, detalle);
+
+                    if (html) {
+                        const base64 = await sesion.renderizarPdf(html);
+                        const archivo = guardar(nombre, base64);
+                        marcarPdf(db, op.requestId, "generado", archivo);
+                        exitosas++;
+                        log(`✓ ${pos} ${archivo} (constancia generada)`);
+                    } else {
+                        // Tipos sin detalle/plantilla aún (PAGELE_*): solo datos.
+                        marcarPdf(db, op.requestId, "cliente_pendiente");
+                        clientePendiente++;
+                        log(`◧ ${pos} ${op.product} (datos guardados, sin plantilla): ${nombre}`);
+                    }
+                }
+
+            } catch (err) {
+                fallidas++;
+                marcarPdf(db, op.requestId, "error", null, err.message);
+                log(`✗ ${pos} ${nombre} — ${err.message}`);
+            }
         }
+
+    } catch (err) {
+        if (err instanceof CancelacionError) {
+            cancelado = true;
+            log("■ Sincronización cancelada por el usuario.");
+        } else {
+            throw err;
+        }
+    } finally {
+        // Siempre liberamos la BD y la conexión al navegador, aunque la búsqueda
+        // falle a mitad o el usuario cancele (antes se filtraban en esos casos).
+        db.close();
+        if (sesion) await sesion.cerrar();
     }
 
-    db.close();
-    await sesion.cerrar();
+    log(`\n${cancelado ? "Cancelado" : "Listo"}. Nuevos PDF: ${exitosas}, ya existentes: ${yaExistentes}, ` +
+        `con error: ${fallidas}, pendientes: ${clientePendiente}. Carpeta: ${carpetaConstancias()}`);
 
-    log(`\nListo. Nuevos PDF: ${exitosas}, ya existentes: ${yaExistentes}, con error: ${fallidas}, ` +
-        `pendientes: ${clientePendiente}, no soportados: ${noSoportadas}. ` +
-        `Carpeta: ${carpetaConstancias()}`);
-
-    return { exitosas, fallidas, clientePendiente, noSoportadas, yaExistentes, total: ops.length };
+    return { exitosas, fallidas, clientePendiente, yaExistentes, total, cancelado };
 }
 
 if (require.main === module) {

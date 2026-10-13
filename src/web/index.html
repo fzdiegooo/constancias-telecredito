@@ -170,6 +170,8 @@
         <button class="chip" data-dias="30">30 días</button>
         <label class="inline"><input type="checkbox" id="forzar"> Re-descargar</label>
         <button id="btnSync">2. Sincronizar</button>
+        <button class="sec" id="btnPausar" style="display:none">⏸ Pausar</button>
+        <button class="sec" id="btnDetener" style="display:none">■ Detener</button>
       </div>
       <div class="log" id="log"></div>
     </div>
@@ -307,6 +309,7 @@ function verPdf(tr) {
     if (visorOn) { $("#pvVacio").style.display = "none"; $("#pvScroll").style.display = "block"; renderPdf(id); prefetchVecinos(tr); }
   } else {
     renderToken++;
+    $("#pvAbrir").removeAttribute("href");
     $("#pvScroll").style.display = "none"; $("#pvBtn").style.display = "none";
     $("#pvVacio").style.display = "flex";
     $("#pvVacio").textContent = "Esta operación aún no tiene PDF (estado: " + estado + ").";
@@ -373,10 +376,30 @@ $("#btnCarpeta").onclick = async () => {
 /* ===== Sincronizar ===== */
 function logLinea(linea) {
   const box = $("#log"); box.style.display = "block";
-  const tipo = linea.startsWith("✓") ? "ok" : linea.startsWith("✗") ? "error" : (linea.startsWith("◧")||linea.startsWith("⏭")) ? "omitido" : "";
+  const tipo = linea.startsWith("✓") ? "ok"
+    : (linea.startsWith("✗") || linea.startsWith("■")) ? "error"
+    : (linea.startsWith("◧") || linea.startsWith("⏭") || linea.startsWith("⏸") || linea.startsWith("▶") || linea.startsWith("⚠")) ? "omitido"
+    : "";
   const div = document.createElement("div"); if (tipo) div.className = tipo; div.textContent = linea;
   box.appendChild(div); box.scrollTop = box.scrollHeight;
 }
+
+/* Controles de pausa / cancelación del sync en curso */
+let pausado = false;
+function mostrarControlesSync(on) {
+  $("#btnPausar").style.display = on ? "inline-block" : "none";
+  $("#btnDetener").style.display = on ? "inline-block" : "none";
+  if (!on) { pausado = false; $("#btnPausar").textContent = "⏸ Pausar"; $("#btnDetener").disabled = false; }
+}
+async function controlSync(accion) {
+  try { await fetch("/api/sync/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion }) }); } catch {}
+}
+$("#btnPausar").onclick = () => {
+  pausado = !pausado;
+  $("#btnPausar").textContent = pausado ? "▶ Reanudar" : "⏸ Pausar";
+  controlSync(pausado ? "pausar" : "reanudar");
+};
+$("#btnDetener").onclick = () => { $("#btnDetener").disabled = true; controlSync("cancelar"); };
 $("#btnAbrir").onclick = async () => {
   $("#btnAbrir").disabled = true; $("#estadoAbrir").textContent = "Abriendo…";
   try { const r = await (await fetch("/api/abrir", { method: "POST" })).json(); $("#estadoAbrir").textContent = (r.ok?"✓ ":"✗ ") + r.mensaje; }
@@ -391,29 +414,34 @@ document.querySelectorAll(".chip[data-dias]").forEach(b => b.onclick = () => {
 $("#btnSync").onclick = async () => {
   if (!$("#desde").value || !$("#hasta").value) { alert("Elige fechas desde/hasta."); return; }
   $("#btnSync").disabled = true; $("#log").innerHTML = ""; $("#log").style.display = "block";
-  const resp = await fetch("/api/sync", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ desde: aDMY($("#desde").value), hasta: aDMY($("#hasta").value), forzar: $("#forzar").checked })
-  });
-  if (!resp.ok) { logLinea("✗ " + (await resp.json()).error); $("#btnSync").disabled = false; return; }
-  const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
-  while (true) {
-    const { value, done } = await reader.read(); if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const bloque = buf.slice(0, idx); buf = buf.slice(idx + 2);
-      const ev = (bloque.match(/^event: (.+)$/m) || [])[1];
-      const dm = bloque.match(/^data: (.+)$/m); if (!dm) continue;
-      const datos = JSON.parse(dm[1]);
-      if (ev === "log") logLinea(datos.linea);
-      else if (ev === "error") logLinea("✗ " + datos.mensaje);
-      else if (ev === "fin") logLinea(`✔ Terminado. Nuevos: ${datos.exitosas}, ya existían: ${datos.yaExistentes}, errores: ${datos.fallidas}, pendientes: ${datos.clientePendiente}`);
+  mostrarControlesSync(true);
+  try {
+    const resp = await fetch("/api/sync", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ desde: aDMY($("#desde").value), hasta: aDMY($("#hasta").value), forzar: $("#forzar").checked })
+    });
+    if (!resp.ok) { logLinea("✗ " + (await resp.json()).error); return; }
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const bloque = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const ev = (bloque.match(/^event: (.+)$/m) || [])[1];
+        const dm = bloque.match(/^data: (.+)$/m); if (!dm) continue;
+        const datos = JSON.parse(dm[1]);
+        if (ev === "log") logLinea(datos.linea);
+        else if (ev === "error") logLinea("✗ " + datos.mensaje);
+        else if (ev === "fin") logLinea(`${datos.cancelado ? "■ Cancelada." : "✔ Terminado."} Nuevos: ${datos.exitosas}, ya existían: ${datos.yaExistentes}, errores: ${datos.fallidas}, pendientes: ${datos.clientePendiente}`);
+      }
     }
+  } finally {
+    $("#btnSync").disabled = false;
+    mostrarControlesSync(false);
+    docCache.clear();
+    cargarStats(); cargarLista();
   }
-  $("#btnSync").disabled = false;
-  docCache.clear();
-  cargarStats(); cargarLista();
 };
 
 /* ===== Init ===== */

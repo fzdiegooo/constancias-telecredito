@@ -1,7 +1,12 @@
 // Shell de escritorio (Electron) para la GUI de Constancias TeleCrédito.
-// La GUI real es una app web local servida por el node del sistema
-// (src/server.js), porque usa node:sqlite, que el Node de Electron (v20) no
-// trae. Electron solo lanza ese servidor y muestra su ventana de escritorio.
+// La GUI real es una app web local (src/server.js). Electron lanza ese
+// servidor y muestra su ventana de escritorio.
+//
+// App portable: el servidor usa node:sqlite, que necesita Node >=22.5. En
+// lugar de depender de un Node instalado en el sistema, lanzamos el servidor
+// con el PROPIO ejecutable de Electron en modo Node (ELECTRON_RUN_AS_NODE),
+// que ya trae un Node >=22.5. Así el .exe portable funciona en una máquina
+// limpia, sin Node instalado.
 
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
@@ -15,18 +20,25 @@ let ventana;
 let servidor;
 
 function lanzarServidor() {
-    // Node del sistema (v22.5+) para tener node:sqlite. Electron trae Node 20.
-    servidor = spawn("node", ["--no-warnings", path.join(__dirname, "src", "server.js")], {
+    // process.execPath es el propio Electron (el .exe portable). Con
+    // ELECTRON_RUN_AS_NODE=1 corre como Node puro; los flags van como args.
+    servidor = spawn(process.execPath, [
+        "--no-warnings",
+        "--experimental-sqlite",
+        path.join(__dirname, "src", "server.js")
+    ], {
         cwd: __dirname,
-        env: { ...process.env, NO_BROWSER: "1", PORT: String(PUERTO) },
+        env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: "1",
+            NO_BROWSER: "1",
+            PORT: String(PUERTO)
+        },
         stdio: "inherit"
     });
 
     servidor.on("error", (err) => {
-        const msg = err.code === "ENOENT"
-            ? "No se encontró 'node' en el sistema. Instala Node.js (v22.5+) para usar la aplicación."
-            : `No se pudo iniciar el servidor: ${err.message}`;
-        mostrarError(msg);
+        mostrarError(`No se pudo iniciar el servidor interno: ${err.message}`);
     });
 }
 
@@ -51,6 +63,7 @@ function crearVentana() {
         minWidth: 900,
         minHeight: 600,
         title: "Constancias TeleCrédito",
+        icon: path.join(__dirname, "build", "icon.ico"),
         webPreferences: { contextIsolation: true, nodeIntegration: false }
     });
     ventana.setMenuBarVisibility(false);

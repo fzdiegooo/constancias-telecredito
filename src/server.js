@@ -18,6 +18,10 @@ const PORT = Number(process.env.PORT) || 4599;
 const INDEX = path.join(__dirname, "web", "index.html");
 
 let syncEnCurso = false;
+// Control compartido de la sincronización en curso (pausa/cancelación).
+// La GUI lo muta vía POST /api/sync/control y `correr` lo consulta en sus
+// checkpoints. Es null cuando no hay ningún sync corriendo.
+let syncControl = null;
 
 function enviarJson(res, codigo, obj) {
     const body = JSON.stringify(obj);
@@ -136,6 +140,18 @@ async function manejar(req, res) {
         return;
     }
 
+    // --- Pausar / reanudar / cancelar la sincronización en curso ---
+    if (ruta === "/api/sync/control" && req.method === "POST") {
+        const body = await leerBody(req);
+        if (!syncControl) { enviarJson(res, 409, { error: "No hay sincronización en curso." }); return; }
+        if (body.accion === "pausar") syncControl.pausado = true;
+        else if (body.accion === "reanudar") syncControl.pausado = false;
+        else if (body.accion === "cancelar") { syncControl.cancelado = true; syncControl.pausado = false; }
+        else { enviarJson(res, 400, { error: "Acción inválida (pausar|reanudar|cancelar)." }); return; }
+        enviarJson(res, 200, { ok: true, pausado: syncControl.pausado, cancelado: syncControl.cancelado });
+        return;
+    }
+
     // --- Sincronizar (correr método API) con log en vivo por SSE ---
     if (ruta === "/api/sync" && req.method === "POST") {
         const body = await leerBody(req);
@@ -145,6 +161,7 @@ async function manejar(req, res) {
         if (syncEnCurso) { enviarJson(res, 409, { error: "Ya hay una sincronización en curso." }); return; }
 
         syncEnCurso = true;
+        syncControl = { pausado: false, cancelado: false };
         res.writeHead(200, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
@@ -152,15 +169,20 @@ async function manejar(req, res) {
         });
         const emitir = (evento, datos) => res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
 
+        // Si el cliente cierra la conexión (cierra la pestaña/ventana), cancelamos
+        // el sync para no dejarlo corriendo contra un stream muerto.
+        req.on("close", () => { if (syncControl) syncControl.cancelado = true; });
+
         emitir("log", { linea: `Sincronizando ${desde} a ${hasta}...` });
 
         try {
-            const resumen = await correr(desde, hasta, (linea) => emitir("log", { linea }), { forzar: !!forzar });
+            const resumen = await correr(desde, hasta, (linea) => emitir("log", { linea }), { forzar: !!forzar, control: syncControl });
             emitir("fin", resumen);
         } catch (err) {
             emitir("error", { mensaje: err.message });
         } finally {
             syncEnCurso = false;
+            syncControl = null;
             res.end();
         }
         return;

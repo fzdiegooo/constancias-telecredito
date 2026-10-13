@@ -163,7 +163,8 @@ function dividirRango(fechaDesde, fechaHasta) {
 }
 
 // Busca un solo rango (que ya cabe en el límite del backend), paginando la API.
-async function buscarChunk(sesion, fechaDesde, fechaHasta, onEstado) {
+// onCheckpoint es un punto de pausa/cancelación cooperativo (ver apicli.js).
+async function buscarChunk(sesion, fechaDesde, fechaHasta, onEstado, onCheckpoint = async () => {}) {
     const pageSize = 50;
 
     const pedir = (pageNumber) => sesion.fetchJson(SEARCH_URL, {
@@ -183,10 +184,15 @@ async function buscarChunk(sesion, fechaDesde, fechaHasta, onEstado) {
     let ops = primera.json.operations || [];
 
     for (let p = 1; p < totalPages; p++) {
+        await onCheckpoint();
         onEstado(`  página ${p + 1}/${totalPages}...`);
         const r = await pedir(p);
         if (r.status === 200 && r.json && r.json.operations)
             ops = ops.concat(r.json.operations);
+        else
+            // No cortamos todo el sync por una página caída, pero sí avisamos:
+            // el tramo quedará incompleto y conviene re-sincronizarlo.
+            onEstado(`  ⚠ la página ${p + 1}/${totalPages} falló (status ${r.status}); el tramo puede quedar incompleto.`);
     }
 
     return ops;
@@ -194,7 +200,7 @@ async function buscarChunk(sesion, fechaDesde, fechaHasta, onEstado) {
 
 // Trae TODAS las operaciones del rango. Divide automáticamente en chunks de
 // <=31 días (límite del backend) y fusiona deduplicando por requestId.
-async function buscarTodas(sesion, fechaDesde, fechaHasta, onEstado = () => {}) {
+async function buscarTodas(sesion, fechaDesde, fechaHasta, onEstado = () => {}, onCheckpoint = async () => {}) {
     const chunks = dividirRango(fechaDesde, fechaHasta);
 
     if (chunks.length > 1)
@@ -203,8 +209,9 @@ async function buscarTodas(sesion, fechaDesde, fechaHasta, onEstado = () => {}) 
     const porId = new Map();
 
     for (const [d1, d2] of chunks) {
+        await onCheckpoint();
         if (chunks.length > 1) onEstado(`Tramo ${d1} a ${d2}...`);
-        const ops = await buscarChunk(sesion, d1, d2, onEstado);
+        const ops = await buscarChunk(sesion, d1, d2, onEstado, onCheckpoint);
         for (const op of ops) porId.set(op.requestId, op);
     }
 

@@ -18,19 +18,25 @@
     "playwright-core": "^1.61.1"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^35.7.5",
     "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "com.nativaorganics.constanciastelecredito",
     "productName": "Constancias TeleCredito",
+    "asar": false,
     "files": [
       "main.js",
       "src/**/*",
+      "build/icon.ico",
       "package.json"
     ],
     "win": {
-      "target": "portable"
+      "target": "portable",
+      "icon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "Constancias-TeleCredito-portable.exe"
     }
   }
 }

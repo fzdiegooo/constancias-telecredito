@@ -1,1 +1,13 @@
-cd /home/fzdiegooo/proyectos/constancias-telecredito && env -u ELECTRON_RUN_AS_NODE node_modules/electron/dist/electron . --no-sandbox
+Constancias TeleCrédito — cómo lanzar
+
+Desarrollo (requiere Node y dependencias instaladas):
+  npm start              -> abre la app de escritorio (Electron)
+  npm run gui            -> solo el servidor web en http://localhost:4599
+  npm run abrir          -> solo abre/conecta el navegador del banco
+
+Generar el ejecutable portable para Windows:
+  npm run build:win      -> crea dist\Constancias-TeleCredito-portable.exe
+
+El .exe portable es autocontenido: NO requiere tener Node instalado en la
+máquina (usa el Node que trae Electron). Solo necesita Google Chrome o
+Microsoft Edge instalados para conectarse al banco.
