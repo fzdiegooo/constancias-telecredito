@@ -173,6 +173,10 @@
         <button class="sec" id="btnPausar" style="display:none">⏸ Pausar</button>
         <button class="sec" id="btnDetener" style="display:none">■ Detener</button>
       </div>
+      <div class="fila" style="border-top:1px solid var(--borde); padding-top:12px; margin-top:4px">
+        <button class="sec" id="btnOrdenar">Ordenar PDFs por empresa</button>
+        <span id="estadoOrdenar" style="color:var(--gris)">Mueve los PDFs ya descargados a una carpeta por empresa.</span>
+      </div>
       <div class="log" id="log"></div>
     </div>
   </section>
@@ -353,6 +357,18 @@ async function cargarLista() {
 /* ===== Abrir carpeta ===== */
 $("#btnCarpeta").onclick = async () => {
   try { await fetch("/api/abrir-carpeta", { method: "POST" }); } catch {}
+};
+
+$("#btnOrdenar").onclick = async () => {
+  $("#btnOrdenar").disabled = true; $("#estadoOrdenar").textContent = "Ordenando…";
+  try {
+    const r = await (await fetch("/api/reorganizar", { method: "POST" })).json();
+    $("#estadoOrdenar").textContent = r.ok
+      ? `✓ ${r.movidos} movidas, ${r.yaOrdenados} ya estaban, ${r.faltan} sin archivo.`
+      : "✗ " + r.mensaje;
+    docCache.clear(); cargarLista();
+  } catch (e) { $("#estadoOrdenar").textContent = "✗ " + e.message; }
+  $("#btnOrdenar").disabled = false;
 };
 
 /* ===== Divisor redimensionable ===== */

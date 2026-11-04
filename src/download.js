@@ -13,9 +13,25 @@ function carpetaConstancias() {
     return carpeta;
 }
 
-function guardar(nombre, base64) {
+// Nombre de carpeta seguro para el sistema de archivos (una por empresa).
+function carpetaSegura(nombre) {
+    const limpio = String(nombre || "")
+        .replace(/[\\/:*?"<>|]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    return limpio || "Sin empresa";
+}
 
-    const carpeta = carpetaConstancias();
+// Guarda el PDF dentro de una subcarpeta por empresa. Devuelve la ruta
+// RELATIVA a carpetaConstancias() (p. ej. "FRUTICOLA SELVA SAC/archivo.pdf"),
+// que es lo que se guarda en la base y usa el servidor para servir el archivo.
+function guardar(nombre, base64, empresa) {
+
+    const sub = empresa !== undefined ? carpetaSegura(empresa) : null;
+    const carpeta = sub ? path.join(carpetaConstancias(), sub) : carpetaConstancias();
+
+    if (!fs.existsSync(carpeta))
+        fs.mkdirSync(carpeta, { recursive: true });
 
     // Dos operaciones distintas pueden generar exactamente el mismo nombre
     // de archivo (mismo beneficiario, misma fecha, mismo monto) — sin esta
@@ -38,7 +54,7 @@ function guardar(nombre, base64) {
         Buffer.from(base64, "base64")
     );
 
-    return nombreFinal;
+    return sub ? path.join(sub, nombreFinal) : nombreFinal;
 }
 
 function guardarReporte(logs) {
@@ -56,5 +72,6 @@ function guardarReporte(logs) {
 module.exports = {
     guardar,
     carpetaConstancias,
+    carpetaSegura,
     guardarReporte
 };

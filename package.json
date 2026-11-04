@@ -6,6 +6,7 @@
   "scripts": {
     "gui": "node --no-warnings src/server.js",
     "sync": "node --no-warnings src/apicli.js",
+    "reorganizar": "node --no-warnings --experimental-sqlite src/reorganizar.js",
     "abrir": "node src/abrir.js",
     "start": "electron .",
     "build:win": "electron-builder --win portable"
@@ -18,7 +19,7 @@
     "playwright-core": "^1.61.1"
   },
   "devDependencies": {
-    "electron": "^35.7.5",
+    "electron": "^37.0.0",
     "electron-builder": "^25.1.8"
   },
   "build": {

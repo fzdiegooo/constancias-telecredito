@@ -95,7 +95,7 @@ async function correr(fechaDesde, fechaHasta, log = console.log, opciones = {}) 
 
                 if (esTransferencia(op.product)) {
                     const base64 = await descargarPdfTransferencia(sesion, op.requestId, op.product);
-                    const archivo = guardar(nombre, base64);
+                    const archivo = guardar(nombre, base64, op.sourceCompany);
                     marcarPdf(db, op.requestId, "descargado", archivo);
                     exitosas++;
                     log(`✓ ${pos} ${archivo}`);
@@ -103,7 +103,7 @@ async function correr(fechaDesde, fechaHasta, log = console.log, opciones = {}) 
                 } else if (op.product === "MP_SALARIES") {
                     const { base64 } = await descargarArchivoHaberes(sesion, op.requestId, "P");
                     const nombreHaberes = `${fechaArchivo(op.sendingDate)} - HABERES ${op.requestId} - S ${monto}.pdf`;
-                    const archivo = guardar(nombreHaberes, base64);
+                    const archivo = guardar(nombreHaberes, base64, op.sourceCompany);
                     marcarPdf(db, op.requestId, "descargado", archivo);
                     exitosas++;
                     log(`✓ ${pos} ${archivo}`);
@@ -119,7 +119,7 @@ async function correr(fechaDesde, fechaHasta, log = console.log, opciones = {}) 
 
                     if (html) {
                         const base64 = await sesion.renderizarPdf(html);
-                        const archivo = guardar(nombre, base64);
+                        const archivo = guardar(nombre, base64, op.sourceCompany);
                         marcarPdf(db, op.requestId, "generado", archivo);
                         exitosas++;
                         log(`✓ ${pos} ${archivo} (constancia generada)`);

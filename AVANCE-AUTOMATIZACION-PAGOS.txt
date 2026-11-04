@@ -1,0 +1,236 @@
+================================================================================
+AUTOMATIZACIÓN DE PAGOS A AGRICULTORES — ESTADO Y TRASPASO
+Proyecto: constancias-telecredito  |  Última actualización: 2026-11-03
+================================================================================
+
+OBJETIVO
+--------
+Automatizar la carga de transferencias a agricultores en TeleCrédito BCP
+(www.tlcbcp.com). Entrada: un PDF "Cuadro de pagos" (membrete FRUSELVA/NATIVA)
+con, por fila: guía de ingreso, nombre, CUENTA BCP destino y monto PAGO.
+Hoy se cargan una por una a mano. La empresa pagadora es FRUTICOLA SELVA SAC.
+
+ESTADO EN UNA LÍNEA
+-------------------
+Parseo del cuadro y validación contra la API: LISTOS y probados.
+Ejecución (crear las transferencias): bot de UI construido pero A MEDIO AFINAR
+(selectores shadow-DOM frágiles). NADA se transfirió por error. Riesgo real
+controlado: las órdenes quedan "en pendiente de firma" (reversible); la plata
+solo se mueve cuando una persona firma el lote aparte.
+
+
+================================================================================
+1. REQUISITOS DEL ENTORNO (para continuar en otra compu)
+================================================================================
+- Node con `node:sqlite` nativo (el repo usa Node reciente; probado en v25).
+- `pdftotext` (paquete poppler-utils).  which pdftotext  -> debe existir.
+- Dependencia npm: playwright-core (ya en package.json). Correr `npm install`.
+- Navegador del banco abierto por CDP en el puerto 9222 y LOGUEADO a mano:
+      node src/abrir.js        (abre/conecta; iniciás sesión con tarjeta+clave)
+  Verificar que responde:  curl -s http://127.0.0.1:9222/json/version
+- El JWT del banco dura ~5 min; apiclient.js lo re-captura solo ante 401.
+- Archivos de referencia (capturas de transferencias reales hechas a mano, con
+  curls del navegador). NO están en el repo: gitignored porque contienen tokens
+  y credenciales del banco. Quedan solo en la máquina local; copiarlos aparte si
+  se continúa el análisis en otra compu:
+      curl-transferencia.txt     (flujo ad-hoc completo, pago a PACHECO)
+      curl-transferencia-2.txt   (flujo con beneficiario frecuente)
+  Los PDFs de cuadro de ejemplo están en ~/Downloads (cuadro-pagos*.pdf); no
+  viajan con el repo: copiar el cuadro vigente a la otra compu.
+
+
+================================================================================
+2. ARQUITECTURA Y CÓMO ENCAJA CON LO EXISTENTE
+================================================================================
+Se reusa la infra del proyecto (método "API directa"):
+- src/apiclient.js  -> conecta por CDP al navegador logueado, captura los
+  headers reales (authorization + x-auth-token + app-code + caller-name) desde
+  una petición que dispara el propio SPA, y ejecuta fetch DENTRO de la página
+  (page.evaluate + credentials:"include"). Expone crearSesion() -> { fetchJson,
+  expSegundos, renderizarPdf, cerrar, ... }. Maneja 401 -> refresca -> reintenta.
+- src/db.js -> rutaBaseDatos() y abrir() (SQLite en la carpeta de Constancias).
+
+Archivos NUEVOS de esta tarea (todos en src/pagos/):
+  parse.js       Parsea el cuadro PDF a filas. LISTO.
+  validar.js     FASE 1: valida cuentas/titulares/montos contra API. LISTO.
+  transferir.js  Intento vía API pura. SEGURO pero NO EJECUTA (ver sección 5).
+  enviar_ui.js   FASE 2 vía UI (Playwright). A MEDIO AFINAR (ver sección 6).
+
+
+================================================================================
+3. EL FLUJO REAL DE UNA TRANSFERENCIA A TERCEROS (clave)
+================================================================================
+Descubierto de los curls y de GRABAR una transferencia manual real.
+Base API: https://apisux.ntlc.tlcbcp.com/ux-ntlc-account-transfer-v2/channel/ntlc/v2
+Ruta SPA: #/h/transferencias/terceros/v2/registro
+
+Pasos (UI) y su llamada de red:
+  1) Click tab "Cuentas de terceros BCP"      -> POST account-transfer-orders
+     (abre una orden borrador; devuelve sourceCompanyAccounts y sourceCompanies)
+  2) Dropdown "Cuenta de origen" -> opción
+     "191-9948529-0-89 Corriente Soles - FRUTICOLA"  -> GET company-accounts/{id}
+  3) Input "Cuenta de destino" = cuenta CON guiones (ej 280-17571721-0-74)
+     -> GET third-party-accounts/{cuentaSinGuiones}
+        Respuesta: {currency, currencyDescription, organizationName:<TITULAR>,
+                    description, enabled}
+  4) Input "Monto" = PAGO                       -> POST daily-transfer-amounts/verify
+        body {"amount":"331.60","currency":"PEN"}
+  5) Input "Referencia (opcional)" = "GI1 " + últimos 4 díg. de la guía
+        (001-004530 -> "GI1 4530")
+  6) Campo "Correos" (chips): opcional, solo notificación. Los usados a mano:
+        notificaciones@nativaorganics.pe, contabilidad2@nativaperu.com.pe,
+        mlavado@nativaperu.com.pe
+  7) Botón "Continuar"                          -> PUT account-transfer-orders/{id}
+        body {"amount","currency":"PEN","reference","emails":[...],"message":""}
+        El PUT NO ejecuta: devuelve un PREVIEW
+        {sourceAccount, targetAccount, amount, reference, canSign:false, ...}
+  8) Botón "Enviar a pendiente de firma"        -> POST user-consents
+        body {"devicePrint":"version=3.5.0.0-SNAPSHOT&pm_fp..."}  (+ headers
+        devicetokencookie, orig-device-id = device-binding antifraude)
+
+MUY IMPORTANTE:
+- El botón final es "Enviar a pendiente de firma", NO "firmar". La orden queda
+  en cola de PENDIENTE DE FIRMA. La PLATA NO SE MUEVE hasta que un firmante
+  firme el lote (paso humano, separado). => crear órdenes es REVERSIBLE y de
+  bajo riesgo (se pueden rechazar antes de firmar).
+- El destino NO va en el body del PUT: queda ligado server-side por el GET
+  third-party del paso 3.
+- En los curls aparecían "dos PUT idénticos": NO es doble pago; el primero cayó
+  401 (token vencido), el SPA refrescó y reintentó.
+
+
+================================================================================
+4. DATOS CONCRETOS (empresa, cuenta origen, formatos)
+================================================================================
+- Empresa pagadora: FRUTICOLA SELVA SAC  (RUC 20610822356).
+  OJO: el banco por DEFAULT selecciona NATIVA ORGANICS SAC (RUC 20601225566).
+  Hay que elegir FRUTICOLA. En la API se puede mandar en el body del POST order
+  selectedCompany:{documentNumber,documentType:"RUC",organizationName} PERO es
+  PEGAJOSO a la sesión y NO siempre aplica -> no confiar; verificar siempre.
+  En la UI, elegir la cuenta origen de FRUTICOLA ya fija la empresa.
+- Cuenta origen (soles) FRUTICOLA: número 1919948529089
+  (se muestra "191-9948529-0-89 Corriente Soles"). Ese es el match de selección.
+- Las otras empresas del grupo (en sourceCompanies): COR FREIGHT LOGISTICS SAC,
+  MAFRISA PERU SAC, NATIVA ORGANICS SAC.
+- Los IDs de cuenta (sourceCompanyAccounts[].id, y el {id} del path del PUT) son
+  POR-ORDEN: cambian en cada POST account-transfer-orders. Usar el de la orden
+  en curso, no hardcodear.
+- Formato cuenta: cuadro "401-92832274-0-56" -> API "40192832274056" (sin guiones).
+  En el input de la UI se escribe CON guiones.
+- Referencia: "GI1 " + últimos 4 de la guía.
+- Los agricultores están guardados como FRECUENTES en el banco (se ve la lista en
+  #/h/transferencias/v2/dashboard, con nombre + cuenta). Útil, pero la receta
+  grabada usó el flujo AD-HOC (escribir la cuenta), no el frecuente.
+
+
+================================================================================
+5. FASE 1 — PARSEO Y VALIDACIÓN (LISTO Y PROBADO)
+================================================================================
+PARSE:
+  node src/pagos/parse.js <cuadro.pdf>
+  - Excluye filas con PAGO <= 0 o sin cuenta BCP.
+  - Verificado contra cuadros reales (total reconcilia con el PDF).
+  - cuadro-pagos.pdf (30/10): 25 transferibles, S/46,854.99 (2 saltadas:
+    RUTH CALLERGOS pago -15.68; ISABEL SICHA sin cuenta).
+  - cuadro-pagos-03-11-2026.pdf: 20 transferibles, S/56,761.63, 0 saltadas.
+
+VALIDAR (Fase 1, no mueve nada):
+  node src/abrir.js           (loguearse)
+  node src/pagos/validar.js <cuadro.pdf>
+  - Por fila: GET third-party (compara titular del banco vs cuadro con tokens
+    ordenados sin tildes, maneja orden distinto y Ñ->N) + POST verify.
+  - Escribe junto al PDF: validacion-pagos.csv y validacion-pagos.json.
+  - Corrida real: 20/20 OK en el cuadro del 03-11.
+
+
+================================================================================
+6. FASE 2 — EJECUCIÓN
+================================================================================
+6.A  transferir.js (VÍA API)  ->  NO USAR PARA EJECUTAR
+     - Hace POST order -> GET source -> GET third -> verify -> PUT.
+     - El PUT solo arma el PREVIEW (canSign:false, sin nro de operación). NO
+       ejecuta. El cierre real es POST user-consents con device-binding
+       (devicePrint + devicetokencookie + orig-device-id) que NO se puede
+       reconstruir/replayear de forma segura (y leer el storage del navegador lo
+       bloquea el sandbox). => la firma por API queda descartada por diseño.
+     - El archivo quedó BLINDADO: guardas de empresa (aborta si la orden/el
+       origen no son FRUTICOLA por RUC), verifica source/target del preview, y
+       lanza "NO ejecutada: falta firma" (nunca marca pagada). Sirve como
+       referencia del flujo, no para pagar.
+
+6.B  enviar_ui.js (VÍA UI, Playwright)  ->  CAMINO ELEGIDO, A MEDIO AFINAR
+     node src/pagos/enviar_ui.js <cuadro.pdf> [--solo 4523] [--si] [--emails ...]
+     - Replica la receta de la sección 3 y deja cada orden EN PENDIENTE DE FIRMA.
+     - Gates por fila (si algo no cuadra, NO envía esa fila):
+         * titular del GET third-party == nombre del cuadro
+         * empresa del PUT == FRUTICOLA (si no, aborta el lote)
+         * idempotencia por guía (no repite estados 'enviada'/'pagada')
+     - Correos: omitidos en v1 (opcionales).
+     - Confirmación por fila salvo --si; --solo <guía|últimos4> para probar una.
+
+     PROBLEMA ABIERTO (lo que falta afinar/probar):
+       Los selectores de shadow-DOM son pegajosos/timing-dependientes. En pruebas
+       en seco: una vez llenó bien hasta el destino; otra se COLGÓ esperando el
+       texto "Cuenta de origen" tras clickear la tab. Falta robustecer:
+         - Esperar por el hash "terceros/v2/registro" tras el click de la tab.
+         - Esperar a que el select de origen EXISTA (o detectar si ya hay cuenta
+           elegida de una orden previa) antes de clickear.
+         - Confirmar que getByLabel("Monto")/("Cuenta de destino")/("Referencia
+           (opcional)") resuelven a 1 elemento en el estado real del form.
+         - Confirmar los nombres de botón por rol: "Continuar" y
+           "Enviar a pendiente de firma".
+       Es un afinado ITERATIVO que conviene hacer VIENDO el navegador (modo
+       interactivo, sin --si), arreglando lo que rompa.
+
+
+================================================================================
+7. ESTADO DE DATOS (SQLite, tabla `pagos`)
+================================================================================
+BD: carpeta "Constancias TeleCredito"/constancias.db (ver rutaBaseDatos()).
+Tabla `pagos` (guia PK): nombre, cuenta, pago, referencia, estado, operacion,
+respuesta(JSON), fecha, error.
+Estados usados:
+  simulada  -> pruebas en seco (inofensivas).
+  enviada   -> orden creada en pendiente de firma.
+  pagada    -> (reservado; no se usó: nada se ejecutó por API).
+  error     -> falló/gate no pasó.
+Idempotencia: enviar_ui salta guías en 'enviada' o 'pagada'.
+
+IMPORTANTE sobre el cuadro del 03-11:
+  - Guía 001-004530 (SEVERINO TADEO SERAFINA, S/191.75): se mandó a pendiente de
+    firma A MANO durante la grabación de la receta. Está marcada 'enviada'. NO
+    reenviarla. FALTA que alguien la FIRME en el banco para concretarla.
+  - Faltan por crear las otras 19 (~S/56,570).
+
+
+================================================================================
+8. CARGA MASIVA POR ARCHIVO  ->  DESCARTADA (razón de negocio)
+================================================================================
+Existe la opción (scope bs-massive-payment-operation-v1) y sería robusta, PERO
+NO SIRVE: la carga masiva genera UNA SOLA constancia para TODO el lote. Cada
+agricultor pide SU constancia de pago individual. Por lo tanto cada transferencia
+DEBE ser una operación individual (una operación = una constancia). => se queda
+el camino de transferencias INDIVIDUALES (bot UI, sección 6.B).
+NOTA: cada transferencia individual que se concrete queda como una operación
+propia en el banco y su constancia se puede bajar con el flujo que YA tiene el
+proyecto (src/apicli.js / descargarPdfTransferencia). O sea, pagar individual
+encaja perfecto con la parte de constancias ya existente.
+
+
+================================================================================
+9. PRÓXIMOS PASOS SUGERIDOS (en orden)
+================================================================================
+[ ] Robustecer enviar_ui.js (sección 6.B) con waits/guards y probarlo
+    INTERACTIVO (sin --si) viendo el navegador, en una canary (guía chica, ej
+    4523 SEVERINO S/331.60): verificar que la orden aparece en "pendiente de
+    firma". Luego correr el resto de a poco.
+[ ] Tras firmar un lote, bajar las constancias individuales con el flujo
+    existente (src/apicli.js) para entregar a cada agricultor.
+[ ] Opcional: re-agregar los correos de aviso al flujo UI.
+[ ] Firmar en el banco la transferencia de SEVERINO 4530 ya encolada (si se
+    quiere concretar ese pago).
+
+Memoria de Claude con este mismo estado: en
+~/.claude/projects/-home-fzdiegooo-proyectos-constancias-telecredito/memory/
+archivo pagos-agricultores-automatizacion.md
+================================================================================

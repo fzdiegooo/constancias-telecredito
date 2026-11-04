@@ -12,6 +12,7 @@ const { spawn } = require("child_process");
 const { abrir, listar, estadisticas, rutaBaseDatos } = require("./db");
 const { carpetaConstancias } = require("./download");
 const { correr } = require("./apicli");
+const { reorganizar } = require("./reorganizar");
 const { connect } = require("./connect");
 
 const PORT = Number(process.env.PORT) || 4599;
@@ -123,6 +124,17 @@ async function manejar(req, res) {
         try {
             spawn(abridor, [carpeta], { detached: true, stdio: "ignore", shell: process.platform === "win32" }).unref();
             enviarJson(res, 200, { ok: true, carpeta });
+        } catch (err) {
+            enviarJson(res, 500, { ok: false, mensaje: err.message });
+        }
+        return;
+    }
+
+    // --- Reorganizar PDFs ya descargados en subcarpetas por empresa ---
+    if (ruta === "/api/reorganizar" && req.method === "POST") {
+        try {
+            const r = reorganizar(() => {});
+            enviarJson(res, 200, { ok: true, ...r });
         } catch (err) {
             enviarJson(res, 500, { ok: false, mensaje: err.message });
         }
