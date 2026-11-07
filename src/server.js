@@ -9,11 +9,14 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
+const os = require("os");
 const { abrir, listar, estadisticas, rutaBaseDatos } = require("./db");
 const { carpetaConstancias } = require("./download");
 const { correr } = require("./apicli");
 const { reorganizar } = require("./reorganizar");
 const { connect } = require("./connect");
+const { parsearCuadro } = require("./pagos/parse");
+const { correrPagos } = require("./pagos/ejecutar");
 
 const PORT = Number(process.env.PORT) || 4599;
 const INDEX = path.join(__dirname, "web", "index.html");
@@ -23,6 +26,18 @@ let syncEnCurso = false;
 // La GUI lo muta vía POST /api/sync/control y `correr` lo consulta en sus
 // checkpoints. Es null cuando no hay ningún sync corriendo.
 let syncControl = null;
+
+// Mismo esquema para el envío de pagos (pestaña Pagos).
+let pagosEnCurso = false;
+let pagosControl = null;
+
+// Escribe un PDF (base64) a un archivo temporal y devuelve su ruta.
+function pdfTemporal(pdfBase64) {
+    const limpio = String(pdfBase64 || "").replace(/^data:application\/pdf;base64,/, "");
+    const ruta = path.join(os.tmpdir(), `cuadro-${Date.now()}.pdf`);
+    fs.writeFileSync(ruta, Buffer.from(limpio, "base64"));
+    return ruta;
+}
 
 function enviarJson(res, codigo, obj) {
     const body = JSON.stringify(obj);
@@ -195,6 +210,74 @@ async function manejar(req, res) {
         } finally {
             syncEnCurso = false;
             syncControl = null;
+            res.end();
+        }
+        return;
+    }
+
+    // --- Pagos: previsualizar el cuadro (parsea el PDF, sin tocar el banco) ---
+    if (ruta === "/api/pagos/cuadro" && req.method === "POST") {
+        const body = await leerBody(req);
+        if (!body.pdfBase64) { enviarJson(res, 400, { error: "Falta el PDF (pdfBase64)." }); return; }
+        let tmp = null;
+        try {
+            tmp = pdfTemporal(body.pdfBase64);
+            const { filas, saltadas } = parsearCuadro(tmp);
+            const db = abrir();
+            let estados = {};
+            try {
+                for (const r of db.prepare("SELECT guia, estado FROM pagos").all()) estados[r.guia] = r.estado;
+            } finally { db.close(); }
+            const total = filas.reduce((s, f) => s + f.pago, 0);
+            enviarJson(res, 200, { filas, saltadas, total, estados });
+        } catch (err) {
+            enviarJson(res, 500, { error: err.message });
+        } finally {
+            if (tmp) { try { fs.unlinkSync(tmp); } catch {} }
+        }
+        return;
+    }
+
+    // --- Pagos: pausar / reanudar / cancelar el envío en curso ---
+    if (ruta === "/api/pagos/control" && req.method === "POST") {
+        const body = await leerBody(req);
+        if (!pagosControl) { enviarJson(res, 409, { error: "No hay envío en curso." }); return; }
+        if (body.accion === "pausar") pagosControl.pausado = true;
+        else if (body.accion === "reanudar") pagosControl.pausado = false;
+        else if (body.accion === "cancelar") { pagosControl.cancelado = true; pagosControl.pausado = false; }
+        else { enviarJson(res, 400, { error: "Acción inválida." }); return; }
+        enviarJson(res, 200, { ok: true, pausado: pagosControl.pausado, cancelado: pagosControl.cancelado });
+        return;
+    }
+
+    // --- Pagos: enviar a pendiente de firma (SSE con log en vivo) ---
+    if (ruta === "/api/pagos/enviar" && req.method === "POST") {
+        const body = await leerBody(req);
+        if (!body.pdfBase64) { enviarJson(res, 400, { error: "Falta el PDF (pdfBase64)." }); return; }
+        if (pagosEnCurso) { enviarJson(res, 409, { error: "Ya hay un envío en curso." }); return; }
+
+        let tmp;
+        try { tmp = pdfTemporal(body.pdfBase64); }
+        catch (err) { enviarJson(res, 400, { error: "PDF inválido: " + err.message }); return; }
+
+        pagosEnCurso = true;
+        pagosControl = { pausado: false, cancelado: false };
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
+        const emitir = (evento, datos) => res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
+        req.on("close", () => { if (pagosControl) pagosControl.cancelado = true; });
+
+        try {
+            const resumen = await correrPagos(
+                { pdfPath: tmp, dryRun: !!body.dryRun, soloGuias: body.soloGuias || null, control: pagosControl },
+                (linea) => emitir("log", { linea })
+            );
+            emitir("fin", resumen);
+        } catch (err) {
+            emitir("error", { mensaje: err.message });
+        } finally {
+            pagosEnCurso = false;
+            pagosControl = null;
+            try { fs.unlinkSync(tmp); } catch {}
             res.end();
         }
         return;

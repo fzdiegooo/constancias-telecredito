@@ -98,6 +98,7 @@
 <div class="tabs">
   <button data-tab="explorar" class="activo">Explorar</button>
   <button data-tab="sync">Sincronizar</button>
+  <button data-tab="pagos">Pagos</button>
 </div>
 
 <div class="cuerpo">
@@ -178,6 +179,39 @@
         <span id="estadoOrdenar" style="color:var(--gris)">Mueve los PDFs ya descargados a una carpeta por empresa.</span>
       </div>
       <div class="log" id="log"></div>
+    </div>
+  </section>
+
+  <!-- ===== PAGOS ===== -->
+  <section class="tab" id="tab-pagos">
+    <div class="panel">
+      <h2>Pagos a agricultores (desde el cuadro)</h2>
+      <p style="color:var(--gris); margin:0 0 4px">
+        Crea las transferencias del cuadro <b>individuales</b> (una por agricultor, cada una con su constancia) y las deja
+        <b>EN PENDIENTE DE FIRMA</b>. La plata no se mueve hasta que firmás el lote en TeleCrédito. Es reversible.
+      </p>
+      <div class="fila">
+        <button class="sec" id="btnAbrirPagos">1. Abrir navegador</button>
+        <span id="estadoAbrirPagos" style="color:var(--gris)">Luego inicia sesión en el banco</span>
+      </div>
+      <div class="fila">
+        <label class="inline">2. Cuadro (PDF) <input type="file" id="filePago" accept="application/pdf"></label>
+        <button class="sec" id="btnPrevia">Previsualizar</button>
+        <span id="estadoCuadro" style="color:var(--gris)"></span>
+      </div>
+      <div class="tabla-wrap" id="wrapPagos" style="display:none; max-height:40vh; flex:none">
+        <table>
+          <thead><tr><th></th><th>Guía</th><th>Nombre</th><th>Cuenta</th><th class="monto">Pago</th><th>Ref.</th><th>Estado</th></tr></thead>
+          <tbody id="tbodyPagos"></tbody>
+        </table>
+      </div>
+      <div class="fila">
+        <label class="inline"><input type="checkbox" id="dryRunPago"> Simulacro (no crea nada)</label>
+        <button id="btnEnviarPagos" disabled>3. Enviar a pendiente de firma</button>
+        <button class="sec" id="btnPausarPagos" style="display:none">⏸ Pausar</button>
+        <button class="sec" id="btnDetenerPagos" style="display:none">■ Detener</button>
+      </div>
+      <div class="log" id="logPagos"></div>
     </div>
   </section>
 
@@ -457,6 +491,99 @@ $("#btnSync").onclick = async () => {
     mostrarControlesSync(false);
     docCache.clear();
     cargarStats(); cargarLista();
+  }
+};
+
+/* ===== Pestaña Pagos ===== */
+let pagoPdfB64 = null;
+let pausadoPago = false;
+
+function logPago(linea) {
+  const box = $("#logPagos"); box.style.display = "block";
+  const tipo = linea.startsWith("✓") ? "ok"
+    : (linea.startsWith("✗") || linea.startsWith("■") || linea.startsWith("🛑")) ? "error"
+    : (linea.startsWith("○") || linea.startsWith("↷") || linea.startsWith("⏸") || linea.startsWith("▶") || linea.startsWith("⚠")) ? "omitido"
+    : "";
+  const div = document.createElement("div"); if (tipo) div.className = tipo; div.textContent = linea;
+  box.appendChild(div); box.scrollTop = box.scrollHeight;
+}
+
+$("#btnAbrirPagos").onclick = async () => {
+  $("#btnAbrirPagos").disabled = true; $("#estadoAbrirPagos").textContent = "Abriendo…";
+  try { const r = await (await fetch("/api/abrir", { method: "POST" })).json(); $("#estadoAbrirPagos").textContent = (r.ok?"✓ ":"✗ ") + r.mensaje; }
+  catch (e) { $("#estadoAbrirPagos").textContent = "✗ " + e.message; }
+  $("#btnAbrirPagos").disabled = false;
+};
+
+$("#filePago").onchange = () => {
+  const f = $("#filePago").files[0];
+  if (!f) { pagoPdfB64 = null; return; }
+  const rd = new FileReader();
+  rd.onload = () => { pagoPdfB64 = rd.result.split(",")[1]; $("#estadoCuadro").textContent = "✓ " + f.name + " — ahora previsualizá."; $("#btnEnviarPagos").disabled = true; };
+  rd.readAsDataURL(f);
+};
+
+const ESTADO_LBL = { enviada: "en pendiente de firma", pagada: "pagada", simulada: "simulada", error: "error previo" };
+
+$("#btnPrevia").onclick = async () => {
+  if (!pagoPdfB64) { alert("Elegí el PDF del cuadro."); return; }
+  $("#estadoCuadro").textContent = "Leyendo…";
+  try {
+    const r = await (await fetch("/api/pagos/cuadro", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdfBase64: pagoPdfB64 }) })).json();
+    if (r.error) { $("#estadoCuadro").textContent = "✗ " + r.error; return; }
+    const tb = $("#tbodyPagos"); tb.innerHTML = "";
+    for (const f of r.filas) {
+      const est = r.estados[f.guia];
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td></td><td>${esc(f.guia)}</td><td>${esc(f.nombre)}</td><td>${esc(f.cuentaCuadro)}</td>`
+        + `<td class="monto">S/ ${Number(f.pago).toFixed(2)}</td><td>${esc(f.referencia)}</td>`
+        + `<td>${est ? esc(ESTADO_LBL[est] || est) : ""}</td>`;
+      tb.appendChild(tr);
+    }
+    for (const s of r.saltadas) {
+      const tr = document.createElement("tr"); tr.className = "omitido";
+      tr.innerHTML = `<td></td><td>${esc(s.guia)}</td><td>${esc(s.nombre)}</td><td>${esc(s.cuentaCuadro || "")}</td><td class="monto"></td><td></td><td>saltada: ${esc(s.motivo)}</td>`;
+      tb.appendChild(tr);
+    }
+    $("#wrapPagos").style.display = "block";
+    $("#btnEnviarPagos").disabled = false;
+    $("#estadoCuadro").textContent = `${r.filas.length} transferibles · total S/ ${Number(r.total).toFixed(2)} · ${r.saltadas.length} saltadas`;
+  } catch (e) { $("#estadoCuadro").textContent = "✗ " + e.message; }
+};
+
+function controlesPago(on) {
+  $("#btnPausarPagos").style.display = on ? "inline-block" : "none";
+  $("#btnDetenerPagos").style.display = on ? "inline-block" : "none";
+  if (!on) { pausadoPago = false; $("#btnPausarPagos").textContent = "⏸ Pausar"; $("#btnDetenerPagos").disabled = false; }
+}
+async function controlPago(accion) { try { await fetch("/api/pagos/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion }) }); } catch {} }
+$("#btnPausarPagos").onclick = () => { pausadoPago = !pausadoPago; $("#btnPausarPagos").textContent = pausadoPago ? "▶ Reanudar" : "⏸ Pausar"; controlPago(pausadoPago ? "pausar" : "reanudar"); };
+$("#btnDetenerPagos").onclick = () => { $("#btnDetenerPagos").disabled = true; controlPago("cancelar"); };
+
+$("#btnEnviarPagos").onclick = async () => {
+  if (!pagoPdfB64) { alert("Elegí el PDF del cuadro."); return; }
+  const dry = $("#dryRunPago").checked;
+  if (!dry && !confirm("Vas a CREAR las transferencias en pendiente de firma (no se firman solas). ¿Seguir?")) return;
+  $("#btnEnviarPagos").disabled = true; $("#logPagos").innerHTML = ""; controlesPago(true);
+  try {
+    const resp = await fetch("/api/pagos/enviar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pdfBase64: pagoPdfB64, dryRun: dry }) });
+    if (!resp.ok) { logPago("✗ " + (await resp.json()).error); return; }
+    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const bloque = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const ev = (bloque.match(/^event: (.+)$/m) || [])[1];
+        const dm = bloque.match(/^data: (.+)$/m); if (!dm) continue;
+        const d = JSON.parse(dm[1]);
+        if (ev === "log") logPago(d.linea);
+        else if (ev === "error") logPago("✗ " + d.mensaje);
+        else if (ev === "fin") logPago(`✔ ${d.cancelado ? "Cancelado. " : ""}En pendiente de firma: ${d.enviadas}, simuladas: ${d.simuladas}, errores: ${d.errores}`);
+      }
+    }
+  } finally {
+    $("#btnEnviarPagos").disabled = false; controlesPago(false);
   }
 };
 
